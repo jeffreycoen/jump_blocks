@@ -3925,6 +3925,10 @@ const DEF = {
   lipH: 610, widthMM: 1524, tableMM: 1000, landing: true, pricePerKg: 0,
   optTargetKg: 200, optMassCap: 15, optTimeWeight: 1.0, optEvals: 60, optShell: true, optWalls: true, optTubes: true, optInfill: true, optCore: true, optSecondary: false, optLayer: true, optHex: true, optTri: true, optSq: true, optBuild: 'both', optKeepWalls: false,
 };
+// The block the page opens on: sandwich walls of hexagons on zigzag plates with round openings, arches in the top corners.
+Object.assign(DEF, { look: 'sandHexZig', gen: 'cut', wallBuild: 'sandwich', sandStyle: 'honeycomb', sandCore: 'zigzag', sandCoreHoles: 'circles', sandHoleAuto: true, sandCell: 12, sandStrut: 0.84, sandArch: true, deckBuild: 'sandwich',
+  windowStyle: 'hexLattice', wallCell: 12, strut: 0.84, windowShort: true, core: 'ribs', ribT: 0.84, ribDir: 'x', deckPattern: true, deckCell: 5, tubes: true, tubePattern: 'honeycomb', tubeCell: 12, tubeStrut: 0.84,
+  studPattern: true, studHoleFrac: 0.9, lattice2: false, lattice3: 'none', infill: 0, layerH: 0.28, wallAuto: true, deckAuto: true, tubeWallAuto: true, noSupports: true, preset: 'custom' });
 const PRESETS = {
   orca: { layerH: 0.2, nozzle: 0.4, outerW: 0.42, innerW: 0.45, infillW: 0.45, wallLoops: 2, topLayers: 5, bottomLayers: 3, infill: 0.15, anchors: true, overlap: 0.15, thickBridges: false, thickInternalBridges: true, flowRatio: 0.96, density: 1.27, maxFlow: 12, solidBelowArea: 15 },
   prusa: { layerH: 0.2, nozzle: 0.4, outerW: 0.45, innerW: 0.45, infillW: 0.45, wallLoops: 3, topLayers: 5, bottomLayers: 4, infill: 0.15, anchors: true, overlap: 0.25, thickBridges: true, thickInternalBridges: true, flowRatio: 1.0, density: 1.3, maxFlow: 12, solidBelowArea: 70 },
@@ -3934,8 +3938,8 @@ const MATERIAL_NAMES = {
   polymaker_petg: 'Polymaker PETG V2.0', polylite_petg: 'Polymaker PolyLite PETG V6.0', bambu_petg_hf: 'Bambu Lab PETG HF', prusament_petg: 'Prusament PETG', esun_petg: 'eSUN PETG', overture_petg: 'Overture PETG V5',
 };
 let S = { ...DEF };
-try { const saved = JSON.parse(localStorage.getItem('jumpblocks.v4') || 'null'); if (saved && typeof saved === 'object') S = { ...DEF, ...saved }; } catch (e) {}
-const persist = () => { try { localStorage.setItem('jumpblocks.v4', JSON.stringify(S)); } catch (e) {} };
+try { const saved = JSON.parse(localStorage.getItem('jumpblocks.v5') || 'null'); if (saved && typeof saved === 'object') S = { ...DEF, ...saved }; } catch (e) {}
+const persist = () => { try { localStorage.setItem('jumpblocks.v5', JSON.stringify(S)); } catch (e) {} };
 
 const LEGO = { pitch: 8, plate: 3.2, wall: 1.2, deck: 1.0, tubeWall: (6.51 - 4.8) / 2 };
 const GEOM_KEYS = ['gen','archLean','archCell','archStrut','archCurve','archGrid','archShells','archRows','archCore','archPlates','growStyle','growCell','growStrut','growTruss','type','studs','scale','nx','ny','heightPlates','risePlates','orientation','noSupports','bridgeMax','clearance','studClear','clutch','studD','studH','studHollow','studHoleFrac','wall','deck','tubes','tubeWall','core','ribT','ribDir','deckCell','cell','latticeT','windowStyle','windowW','windowH','wallCell','strut','windowShort','wallBuild','sandStyle','sandCore','sandCoreHoles','sandCoreHoleD','sandCell','sandStrut','sandArch','deckBuild','drainHoles','drainD','tubePattern','tubeCell','tubeStrut','deckPattern','studPattern','lattice2','lattice2Style','cell2','strut2','lattice3','cell3','strut3','lattice3Style','layerH','infill'];
@@ -4105,7 +4109,7 @@ const sandLook = (style) => ({ wallBuild: 'sandwich', sandStyle: style, sandCore
 const LOOKS = {
   lego: { gen: 'cut', wallBuild: 'solid', sandArch: false, deckBuild: 'solid', core: 'ribs', windowStyle: 'gothic', deckPattern: false, tubePattern: 'none', studPattern: false, lattice2: false, lattice3: 'none', wallAuto: true, deckAuto: true, tubeWallAuto: true },
   sandHex: sandLook('honeycomb'), sandTri: sandLook('triangles'), sandSq: sandLook('squares'),
-  sandHexZig: { ...sandLook('honeycomb'), sandCore: 'zigzag', sandCoreHoles: 'circles', sandHoleAuto: true },
+  sandHexZig: { ...sandLook('honeycomb'), sandCore: 'zigzag', sandCoreHoles: 'circles', sandHoleAuto: true, sandStrut: 0.84, strut: 0.84, tubeStrut: 0.84, ribT: 0.84, layerH: 0.28 },
   cutHex: { ...sandLook('honeycomb'), wallBuild: 'solid', sandArch: false, deckBuild: 'solid' },
   arch: { gen: 'arch', archLean: 30, archCell: 7, archStrut: 0.9, archCurve: 0.5, archGrid: 0, archShells: 2, archRows: 'stagger', archCore: 'ties', archPlates: 1, tubes: true, wallAuto: true, tubeWallAuto: true, infill: 0, layerH: 0.24, noSupports: true, preset: 'custom' },
   archWebHex: { gen: 'arch', archLean: 30, archCell: 10, archStrut: 0.84, archCurve: 0, archGrid: 0, archShells: 2, archRows: 'stagger', archCore: 'web', archPlates: 0, tubes: true, wallAuto: true, tubeWallAuto: true, infill: 0, layerH: 0.28, noSupports: true, preset: 'custom' },
