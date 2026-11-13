@@ -3911,15 +3911,15 @@ const hm = (s) => { if (s == null || !isFinite(s)) return '—'; const tot = Mat
 
 // ---------- state ----------
 const DEF = {
-  type: 'brick', look: 'lego', gen: 'cut', noSupports: true, bridgeMax: 30, scale: 5, nx: 2, ny: 4, heightPlates: 3, risePlates: 3, orientation: 'auto',
+  type: 'brick', look: 'archWebHex', gen: 'arch', noSupports: true, bridgeMax: 30, scale: 5, nx: 2, ny: 4, heightPlates: 3, risePlates: 3, orientation: 'auto',
   clearance: 0.5, studClear: 0.2, clutch: 0.1, studD: 4.8, studH: 1.7, studHollow: false, studHoleFrac: 0.5,
   wallAuto: true, wall: 6, deckAuto: true, deck: 5, tubes: true, tubeWallAuto: true, tubeWall: 4.275,
   core: 'ribs', ribT: 1.6, ribDir: 'both', deckCell: 0, cell: 30, latticeT: 1.7,
   windowStyle: 'gothic', wallBuild: 'solid', sandStyle: 'honeycomb', sandCore: 'ties', sandCoreHoles: 'none', sandHoleAuto: true, sandCoreHoleD: 4, sandCell: 12, sandStrut: 0.9, sandArch: false, deckBuild: 'solid', windowW: 0.6, windowH: 0.6, wallCell: 14, strut: 5, windowShort: true,
-  archLean: 30, archCell: 7, archStrut: 0.9, archCurve: 0.5, archGrid: 0, archShells: 2, archRows: 'stagger', archCore: 'ties', archPlates: 1,
+  archLean: 45, archCell: 13.5, archStrut: 0.9, archCurve: 0, archGrid: 0, archShells: 2, archRows: 'stagger', archCore: 'web', archPlates: 0,
   drainHoles: true, drainD: 0.6, tubePattern: 'none', tubeCell: 12, tubeStrut: 4, deckPattern: false, studPattern: false, lattice2: false, lattice2Style: 'squares', cell2: 3, strut2: 0.9, lattice3: 'none', cell3: 4, strut3: 1.2, lattice3Style: 'honeycomb',
-  preset: 'orca', layerH: 0.2, nozzle: 0.4, outerW: 0.42, innerW: 0.45, infillW: 0.45, wallLoops: 2, topLayers: 5, bottomLayers: 3,
-  infill: 0.15, patternFactor: 1.0, anchors: true, overlap: 0.15, thickBridges: false, thickInternalBridges: true,
+  preset: 'custom', layerH: 0.24, nozzle: 0.4, outerW: 0.42, innerW: 0.45, infillW: 0.45, wallLoops: 2, topLayers: 5, bottomLayers: 3,
+  infill: 0, patternFactor: 1.0, anchors: true, overlap: 0.15, thickBridges: false, thickInternalBridges: true,
   flowRatio: 0.96, density: 1.27, maxFlow: 12, solidBelowArea: 15, calibGrams: 0, calibTimeH: 0, calibFactor: 1, calibTimeFactor: 1,
   material: 'anycubic_petg_cons', safety: 1.0, patchW: 61, patchL: 100, mu: 0,
   lipH: 610, widthMM: 1524, tableMM: 1000, landing: true, pricePerKg: 0,
@@ -3934,8 +3934,8 @@ const MATERIAL_NAMES = {
   polymaker_petg: 'Polymaker PETG V2.0', polylite_petg: 'Polymaker PolyLite PETG V6.0', bambu_petg_hf: 'Bambu Lab PETG HF', prusament_petg: 'Prusament PETG', esun_petg: 'eSUN PETG', overture_petg: 'Overture PETG V5',
 };
 let S = { ...DEF };
-try { const saved = JSON.parse(localStorage.getItem('jumpblocks.v1') || 'null'); if (saved && typeof saved === 'object') S = { ...DEF, ...saved }; } catch (e) {}
-const persist = () => { try { localStorage.setItem('jumpblocks.v1', JSON.stringify(S)); } catch (e) {} };
+try { const saved = JSON.parse(localStorage.getItem('jumpblocks.v2') || 'null'); if (saved && typeof saved === 'object') S = { ...DEF, ...saved }; } catch (e) {}
+const persist = () => { try { localStorage.setItem('jumpblocks.v2', JSON.stringify(S)); } catch (e) {} };
 
 const LEGO = { pitch: 8, plate: 3.2, wall: 1.2, deck: 1.0, tubeWall: (6.51 - 4.8) / 2 };
 const GEOM_KEYS = ['gen','archLean','archCell','archStrut','archCurve','archGrid','archShells','archRows','archCore','archPlates','growStyle','growCell','growStrut','growTruss','type','studs','scale','nx','ny','heightPlates','risePlates','orientation','noSupports','bridgeMax','clearance','studClear','clutch','studD','studH','studHollow','studHoleFrac','wall','deck','tubes','tubeWall','core','ribT','ribDir','deckCell','cell','latticeT','windowStyle','windowW','windowH','wallCell','strut','windowShort','wallBuild','sandStyle','sandCore','sandCoreHoles','sandCoreHoleD','sandCell','sandStrut','sandArch','deckBuild','drainHoles','drainD','tubePattern','tubeCell','tubeStrut','deckPattern','studPattern','lattice2','lattice2Style','cell2','strut2','lattice3','cell3','strut3','lattice3Style','layerH','infill'];
@@ -4106,7 +4106,7 @@ const LOOKS = {
   sandHexZig: { ...sandLook('honeycomb'), sandCore: 'zigzag', sandCoreHoles: 'circles', sandHoleAuto: true },
   cutHex: { ...sandLook('honeycomb'), wallBuild: 'solid', sandArch: false, deckBuild: 'solid' },
   arch: { gen: 'arch', archLean: 30, archCell: 7, archStrut: 0.9, archCurve: 0.5, archGrid: 0, archShells: 2, archRows: 'stagger', archCore: 'ties', archPlates: 1, tubes: true, wallAuto: true, tubeWallAuto: true, infill: 0, layerH: 0.24, noSupports: true, preset: 'custom' },
-  archWebHex: { gen: 'arch', archLean: 30, archCell: 7, archStrut: 0.9, archCurve: 0, archGrid: 0, archShells: 2, archRows: 'stagger', archCore: 'web', archPlates: 0, tubes: true, wallAuto: true, tubeWallAuto: true, infill: 0, layerH: 0.24, noSupports: true, preset: 'custom' },
+  archWebHex: { gen: 'arch', archLean: 45, archCell: 13.5, archStrut: 0.9, archCurve: 0, archGrid: 0, archShells: 2, archRows: 'stagger', archCore: 'web', archPlates: 0, tubes: true, wallAuto: true, tubeWallAuto: true, infill: 0, layerH: 0.24, noSupports: true, preset: 'custom' },
   archWebPosts: { gen: 'arch', archLean: 30, archCell: 7, archStrut: 0.9, archCurve: 0, archGrid: 0, archShells: 2, archRows: 'posts', archCore: 'web', archPlates: 0, tubes: true, wallAuto: true, tubeWallAuto: true, infill: 0, layerH: 0.24, noSupports: true, preset: 'custom' },
 };
 // the arch looks differ in three choices; when one of them changes, the Look field follows
