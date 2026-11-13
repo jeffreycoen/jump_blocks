@@ -237,6 +237,7 @@ const DEFAULTS = {
   sandCoreHoleD: null,    // mm, diameter of those openings; null = automatic (the largest that leaves one strut width of plate all round)
   sandCell: 12,           // mm, skin cell size (largest that fits whole)
   sandStrut: 0.9,         // mm, skin strut width = skin thickness = core strut width (≥ 2 extrusion lines)
+  openTop: false,         // bricks with ribs, printed studs up: no deck inside the walls. Each stud is a shell with a scalloped lower edge on four fins (from the ribs and walls); the tubes are short grip rings on the ribs
   sandArch: false,        // pointed arches in the top corners of every sandwich wall (both skins), carrying the top rail into the corner posts
   tubePattern: 'none',    // tubes: 'none' | 'triangles' | 'honeycomb' | 'squares' — openings through the tube walls
   tubeCell: 12,           // mm cell size of the tube pattern
@@ -695,7 +696,7 @@ function createCore(wasm) {
   // Sandwich wall in a local frame: X = through the wall (0 at the inner face, tw at the outer face), Y = along (0..len), Z = up (0..h).
   // Two identical lattice skins (same cell grid → straight see-through), full-thickness top and bottom rails, and a core of
   // vertical posts or short ties at the cell vertices. Everything is vertical or a short bridge; nothing is cut free.
-  function sandwichWall(style, len, h, tw, cell, strut, coreMode, lineW, bridgeMax = 30, arches = false, coreHoles = 'none', coreHoleD = null) {
+  function sandwichWall(style, len, h, tw, cell, strut, coreMode, lineW, bridgeMax = 30, arches = false, coreHoles = 'none', coreHoleD = null, topRail = true) {
     const s = Math.max(strut, 2 * lineW);
     const skinT = s;
     const flatTop = style !== 'triangles';
@@ -714,7 +715,8 @@ function createCore(wasm) {
     const mk = (cs, depth, x0) => { const ex = cs.extrude(depth, 0, 0, [1, 1], false); const a = ex.rotate([90, 0, 0]); const m = a.rotate([0, 0, 90]); kill(ex, a); const out = m.translate([x0, 0, 0]); kill(m); return out; };
     const parts = [mk(skin2d, skinT, 0), mk(skin2d, skinT, tw - skinT)];
     // full-thickness rails top and bottom (bottom rail = bearing band and the fit face)
-    parts.push(Manifold.cube([tw, len, s], false), Manifold.cube([tw, len, s], false).translate([0, 0, h - s]));
+    // (the top rail bridges from skin to skin; without it the wall ends in the top edges of its skins and core)
+    parts.push(Manifold.cube([tw, len, s], false)); if (topRail) parts.push(Manifold.cube([tw, len, s], false).translate([0, 0, h - s]));
     // core
     const inPanel = ([u, z]) => u > s && u < len - s && z > s && z < h - s;
     const tie = ([u, z]) => Manifold.cube([tw, s, s], false).translate([0, u - s / 2, z - s / 2]);
@@ -835,14 +837,19 @@ function createCore(wasm) {
       return r;
     }
     const p = resolve(params);
-    const { W, L, H, pitch, wallMM: w, deckMM: t } = p;
+    const { W, L, H, pitch, wallMM: w } = p; let t = p.deckMM;
     const warnings = [];
     const isWedge = p.type === 'wedge';
     const parts = [];   // things to union into the body
     const cuts = [];    // things to subtract at the end
 
+    // Open top: no deck inside the walls. The band over the walls stays (the next course sits on it). Each stud is a shell that
+    // starts on four fins and closes between them in pointed arches; the tubes are short rings that only grip the studs below.
+    const lite = !!p.openTop && !isWedge && !p.oneWide && p.studs && p.orient === 'studsUp' && p.ribs && p.ribT > 0;
+    const ribDir = lite ? 'both' : p.ribDir;   // the fins on the inner side of each stud need the ribs along the block
+    if (lite) t = 0;                            // no deck and no band over the walls: the walls run to the top
     let outer = cubeAt(W, L, 0, H);
-    let cavity = cubeAt(W - 2 * w, L - 2 * w, -1, H - t);
+    let cavity = cubeAt(W - 2 * w, L - 2 * w, -1, lite ? H + 1 : H - t);
     let slopeOff = 0, ceilOff = 0, nKeep = null;
     if (isWedge) {
       // slope plane z = toe + (y + L/2)·tanθ. Keep below it: normal (0, sinθ, −cosθ), offset −(cosθ·toe + sinθ·L/2)
@@ -869,27 +876,28 @@ function createCore(wasm) {
         const s2 = slabS.translate([0, side * (L / 2 - w / 2), 0]); b2 = body.subtract(s2); kill(body, s2); body = b2;
       }
       kill(slabL, slabS);
-      sand = sandwichWall(p.sandStyle, len, hInt, w, p.sandCell, p.sandStrut, p.sandCore, lineW, p.bridgeMax || 30, !!p.sandArch, p.sandCoreHoles, p.sandCoreHoleD);
-      sandS = sandwichWall(p.sandStyle, lenS, hInt, w, p.sandCell, p.sandStrut, p.sandCore, lineW, p.bridgeMax || 30, !!p.sandArch, p.sandCoreHoles, p.sandCoreHoleD);
+      sand = sandwichWall(p.sandStyle, len, hInt, w, p.sandCell, p.sandStrut, p.sandCore, lineW, p.bridgeMax || 30, !!p.sandArch, p.sandCoreHoles, p.sandCoreHoleD, !lite);
+      sandS = sandwichWall(p.sandStyle, lenS, hInt, w, p.sandCell, p.sandStrut, p.sandCore, lineW, p.bridgeMax || 30, !!p.sandArch, p.sandCoreHoles, p.sandCoreHoleD, !lite);
       const rot = sandS.wall.rotate([0, 0, 90]);   // local (X through, Y along) → world (−Y, X): through the wall becomes +y
       for (const side of [-1, 1]) {
         // long walls: local X=0 inner face → world x = side·(W/2 − w) … side·(W/2); local Y 0..len → world y −len/2..len/2
         parts.push(side > 0 ? sand.wall.translate([W / 2 - w, -len / 2, 0]) : sand.wall.mirror([1, 0, 0]).translate([-(W / 2 - w), -len / 2, 0]));
-        parts.push(cubeAt(w, len, hInt - 0.2, hInt + 0.2, side * (W / 2 - w / 2), 0));
+        if (!lite) parts.push(cubeAt(w, len, hInt - 0.2, hInt + 0.2, side * (W / 2 - w / 2), 0));
         // short walls
         parts.push(side > 0 ? rot.translate([lenS / 2, L / 2 - w, 0]) : rot.mirror([0, 1, 0]).translate([lenS / 2, -(L / 2 - w), 0]));
-        parts.push(cubeAt(lenS, w, hInt - 0.2, hInt + 0.2, 0, side * (L / 2 - w / 2)));
+        if (!lite) parts.push(cubeAt(lenS, w, hInt - 0.2, hInt + 0.2, 0, side * (L / 2 - w / 2)));
       }
       kill(sand.wall, sandS.wall, rot);
     }
 
     // internal features — built to full height, trimmed by outer later (wedge) or ending inside the deck (brick)
-    const Hin = isWedge ? H + 1 : H - t + Math.min(1, t * 0.5);   // internal features end inside the deck, never above it
+    const Hin = lite ? H - 0.5 : isWedge ? H + 1 : H - t + Math.min(1, t * 0.5);   // internal features end inside the deck, never above it
     // contact pads (see below): needed where the wall inner face sits outside the stud fit face
     const padW = Math.max(2 * p.outerW + 0.2, p.studDMM * 0.2);   // a thin fin: the stud touches its edge
     const padH = Math.min(Hin, p.studHMM + p.studClear + 1.5);     // only as tall as the stud it grips (+ lead-in)
     const needPads = (W / 2 - w - p.xFit > 0.05) || (L / 2 - w - p.yFit > 0.05);
     const sillZ = needPads ? padH : 0;                             // open-bottom windows start above the pads
+    const ringWall = Math.max(2 * lineW, Math.min(p.tubeStrut || 0, p.tubeWallMM));   // open top: the grip rings are thin shells on the tube's outer face
     const tubeXs = [], tubeYs = [];
     for (let i = 1; i < p.nx; i++) tubeXs.push((i - p.nx / 2) * pitch);
     for (let j = 1; j < p.ny; j++) tubeYs.push((j - p.ny / 2) * pitch);
@@ -898,8 +906,9 @@ function createCore(wasm) {
       if (!p.oneWide) {
         for (const x of tubeXs) for (const y of tubeYs) {
           tubeCentres.push([x, y]);
-          parts.push(cylAt(p.tubeODMM / 2, 0, Hin, x, y));
-          let bore = cylAt(p.tubeIDMM / 2, -1, isWedge ? H + 1 : H - t, x, y);
+          parts.push(cylAt(p.tubeODMM / 2, 0, lite ? padH : Hin, x, y));
+          let bore = cylAt(lite ? p.tubeODMM / 2 - ringWall : p.tubeIDMM / 2, -1, lite ? padH + 1 : isWedge ? H + 1 : H - t, x, y);
+          if (lite) for (const slab of [cubeAt(W, p.ribT, -2, H, 0, y), cubeAt(p.ribT, L, -2, H, x, 0)]) { const b2 = bore.subtract(slab); kill(bore, slab); bore = b2; }   // the ribs cross the ring
           if (isWedge) { const b2 = bore.trimByPlane(nKeep, -ceilOff); kill(bore); bore = b2; }
           cuts.push(bore);
         }
@@ -912,8 +921,8 @@ function createCore(wasm) {
     if (p.ribs && p.ribT > 0 && !p.oneWide) {
       const half = p.ribT / 2;
       if (pitch / 2 - p.studDMM / 2 - p.studClear - half < 0.5) warnings.push('Ribs would touch the studs below; reduce rib thickness.');
-      if (p.ribDir !== 'y') for (const y of tubeYs) { parts.push(cubeAt(W - 2 * w + 1, p.ribT, 0, Hin, 0, y)); ribLines.push(['x', y]); }
-      if (p.ribDir !== 'x') for (const x of tubeXs) { parts.push(cubeAt(p.ribT, L - 2 * w + 1, 0, Hin, x, 0)); ribLines.push(['y', x]); }
+      if (ribDir !== 'y') for (const y of tubeYs) { parts.push(cubeAt(W - 2 * w + 1, p.ribT, 0, Hin, 0, y)); ribLines.push(['x', y]); }
+      if (ribDir !== 'x') for (const x of tubeXs) { parts.push(cubeAt(p.ribT, L - 2 * w + 1, 0, Hin, x, 0)); ribLines.push(['y', x]); }
     }
     let latticeInfo = null;
     if (p.lattice) {
@@ -937,37 +946,38 @@ function createCore(wasm) {
     // would be a mesh of struts that meet in the air. So those layers are straight slats instead, each one running from
     // support to support (rib, tube, wall), and the lattice starts on top of them.
     const deckSk = Math.max(3, Math.round(p.strut / p.layerH)) * p.layerH;
-    const deckSlats = !!p.deckPattern && ['triLattice', 'hexLattice', 'sqLattice'].includes(p.windowStyle) && !isWedge && p.orient === 'studsUp' && t - deckSk >= 2 * p.layerH - 1e-6;
+    const deckSlats = !lite && !!p.deckPattern && ['triLattice', 'hexLattice', 'sqLattice'].includes(p.windowStyle) && !isWedge && p.orient === 'studsUp' && t - deckSk >= 2 * p.layerH - 1e-6;
     const boreZ0 = deckSlats ? H - t + deckSk : H - t - 1;       // stud bores stop on the slats: a slat cut by a bore would end in the air
     const studCentres = [];
     if (!isWedge && p.studs) {
       for (let i = 0; i < p.nx; i++) for (let j = 0; j < p.ny; j++) {
         const x = (i - (p.nx - 1) / 2) * pitch, y = (j - (p.ny - 1) / 2) * pitch;
         studCentres.push([x, y]);
+        if (lite) continue;   // built after the cuts, see below
         const st = cylAt(p.studDMM / 2, H - 0.5, H + p.studHMM, x, y);
         const b2 = body.add(st); kill(body, st); body = b2;
         if (p.studHollow) cuts.push(cylAt(p.studDMM * p.studHoleFrac / 2, boreZ0, H + p.studHMM + 1, x, y));
       }
     }
-    if (p.drainHoles && tubeCentres.length && !p.oneWide && !deckSlats) {   // a slatted lattice deck drains through its openings; a drain hole would cut slats and struts short
+    if (p.drainHoles && tubeCentres.length && !p.oneWide && !deckSlats && !lite) {   // a slatted lattice deck drains through its openings; a drain hole would cut slats and struts short
       const dh = p.tubeIDMM * p.drainD / 2;
       for (const [x, y] of tubeCentres) cuts.push(cylAt(dh, -1, H + p.studHMM + 2, x, y));
     }
     const hAtY = (y) => isWedge ? (p.toe - p.deckV + (y + L / 2) * Math.tan(p.theta)) : (H - t);
     let tubeOpenings = 0, studOpenings = 0, deckOpenings = 0, lat2Openings = 0, deckOpenFrac = 0, deckSand = null;
     if (p.tubePattern && p.tubePattern !== 'none' && p.tubes && !p.oneWide && tubeCentres.length) {
-      const Ro = p.tubeODMM / 2, Ri = p.tubeIDMM / 2, st = p.tubeStrut;
+      const Ro = p.tubeODMM / 2, Ri = lite ? Ro - ringWall : p.tubeIDMM / 2, st = p.tubeStrut;
       const cutters = [];
       const tubePhi = p.orient === 'slopeDown' ? Math.max(25, 45 - p.thetaDeg) : 45;   // a wedge prints tilted by its slope: the points are that much steeper, so no side leans past 45° on the bed
-      const ribAngles = !(p.ribs && p.ribT > 0) ? [] : [...(p.ribDir !== 'y' ? [0, Math.PI] : []), ...(p.ribDir !== 'x' ? [Math.PI / 2, -Math.PI / 2] : [])];   // where the ribs meet each tube
+      const ribAngles = !(p.ribs && p.ribT > 0) ? [] : [...(ribDir !== 'y' ? [0, Math.PI] : []), ...(ribDir !== 'x' ? [Math.PI / 2, -Math.PI / 2] : [])];   // where the ribs meet each tube
       for (const [cx, cy] of tubeCentres) {
-        const wo = wrapOpenings(p.tubePattern, p.tubeCell, st, Ro, Ri, st, hAtY(cy - Ro) - st, cx, cy, ribAngles, p.ribT + 2 * st, p.orient === 'studsUp', tubePhi);
+        const wo = wrapOpenings(p.tubePattern, p.tubeCell, st, Ro, Ri, st, (lite ? padH : hAtY(cy - Ro)) - st, cx, cy, ribAngles, p.ribT + 2 * st, p.orient === 'studsUp', tubePhi);
         tubeOpenings += wo.count; cutters.push(...wo.cutters);
       }
       if (cutters.length) { const all = Manifold.compose(cutters); for (const c of cutters) kill(c); cuts.push(all); }
     }
     // stud pattern: hollow studs with the tube pattern through their walls
-    if (p.studPattern && p.tubePattern !== 'none' && !isWedge && p.studs && studCentres.length) {
+    if (p.studPattern && p.tubePattern !== 'none' && !isWedge && p.studs && studCentres.length && !lite) {
       const Ro = p.studDMM / 2, Ri = p.studDMM * p.studHoleFrac / 2;
       const st = Math.min(p.tubeStrut, p.studHMM * 0.25), cell = Math.min(p.tubeCell, (p.studHMM - 2 * st) / 0.8);
       const cutters = [];
@@ -1030,10 +1040,13 @@ function createCore(wasm) {
           if (!cc.cs) return;
           let cutter = axis === 'x' ? wallCutter(cc.cs, 'y', p.ribT + 0.6, [0, pos, 0]) : wallCutter(cc.cs, 'x', p.ribT + 0.6, [pos, 0, 0]);
           // the rib pattern stops at the outer face of every tube on this rib: it must not slot the tube wall
-          if (p.tubes) for (const [tx, ty] of tubeCentres) { if (Math.abs((axis === 'x' ? ty : tx) - pos) > 0.01) continue; const cyl = cylAt((p.oneWide ? p.pinDMM : p.tubeODMM) / 2 + 0.02, -1, H + 1, tx, ty), n = cutter.subtract(cyl); kill(cutter, cyl); cutter = n; }
+          if (p.tubes) for (const [tx, ty] of tubeCentres) { if (Math.abs((axis === 'x' ? ty : tx) - pos) > 0.01) continue; const cyl = cylAt((p.oneWide ? p.pinDMM : p.tubeODMM) / 2 + 0.02, -1, lite ? padH + s0 : H + 1, tx, ty), n = cutter.subtract(cyl); kill(cutter, cyl); cutter = n; }
+          // open top: a solid strip where each stud fin stands on this rib
+          if (lite) for (const c of (axis === 'x' ? tubeXs : tubeYs)) { const slab = axis === 'x' ? cubeAt(3, p.ribT + 2, -1, H + 1, c, pos) : cubeAt(p.ribT + 2, 3, -1, H + 1, pos, c), n = cutter.subtract(slab); kill(cutter, slab); cutter = n; }   // and where two ribs cross
+          if (lite) for (const [sx, sy] of studCentres) { if (Math.abs(Math.abs((axis === 'x' ? sy : sx) - pos) - pitch / 2) > 0.01) continue; const slab = axis === 'x' ? cubeAt(3, p.ribT + 2, -1, H + 1, sx, pos) : cubeAt(p.ribT + 2, 3, -1, H + 1, pos, sy), n = cutter.subtract(slab); kill(cutter, slab); cutter = n; }
           kill(cc.cs); cuts.push(cutter); windows.push({ axis, u: 0, side: 0, w: p.wallCell, h: p.wallCell, lattice: true, rib: true });
         };
-        const hIntMin = isWedge ? p.toe - p.deckV : H - t;
+        const hIntMin = lite ? Hin : isWedge ? p.toe - p.deckV : H - t;
         for (const [dir, pos] of ribLines) { if (dir === 'x') ribPanel(W, hIntMin, 'x', pos); else ribPanel(L, hIntMin, 'y', pos); }
       }
     } else if (p.windowStyle !== 'none') {
@@ -1066,7 +1079,7 @@ function createCore(wasm) {
     }
     // deck pattern: wall strut pattern cut vertically through the deck, keeping a rail at the edges and around studs
     let deckSlatInfo = null;
-    if (p.deckPattern && isLatticeWall) {
+    if (p.deckPattern && isLatticeWall && !lite) {
       const style = p.windowStyle === 'triLattice' ? 'triangles' : p.windowStyle === 'sqLattice' ? 'squares' : 'honeycomb';
       const st = p.strut;
       const x0 = -(W / 2 - w - st), x1 = -x0, y0 = -(L / 2 - w - st), y1 = -y0;
@@ -1277,6 +1290,44 @@ function createCore(wasm) {
         const b2 = body.add(all); kill(body, all); body = b2;
       }
     }
+    // Open top: stud shells, their fins and the solid strips the wall fins stand on. Added after the cuts so no pattern notches them.
+    let openTop = null;
+    if (lite) {
+      const lean = 28 * Math.PI / 180, tl = Math.tan(lean);                       // built 2° inside a 30° limit
+      const R = p.studDMM / 2, twS = Math.max(2 * lineW, R * (1 - p.studHoleFrac)), tf = Math.max(p.ribT, 2 * lineW);
+      const rPad = R + 0.6, quarter = Math.PI / 2 * rPad;                           // arc between two fins, on the cutter's outer face
+      const rise = (quarter / 2 - tf / 2) / tl, zs = H - rise, zTop = H + p.studHMM; // the arches spring at zs and close at the top of the body
+      const inX = W / 2 - w, inY = L / 2 - w, skin = sand ? sand.skinT : Math.min(w, Math.max(p.strut, 2 * lineW));
+      const add = [], strips = new Set(); let fins = 0, zFinMin = Infinity;
+      for (const [sx, sy] of studCentres) {
+        let shell = cylAt(R, zs, zTop, sx, sy); { const b = cylAt(R - twS, zs - 1, zTop + 1, sx, sy), n = shell.subtract(b); kill(shell, b); shell = n; }
+        // between the fins the lower edge is a pointed arch: wrapped cutters, as for the tube openings
+        const polys = []; for (let k = 0; k < 4; k++) { const u0 = k * quarter + tf / 2, u1 = (k + 1) * quarter - tf / 2; polys.push([[u0, zs - 1], [u1, zs - 1], [u1, zs], [(u0 + u1) / 2, zs + rise], [u0, zs]]); }
+        const cs = CrossSection.ofPolygons(polys, 'Positive'), ex = cs.extrude(twS + 1.2, 0, 0, [1, 1], false), rot = ex.rotate([90, 0, 0]), ref = rot.refineToLength(Math.max(0.6, Math.min(1.5, rPad * 0.12)));
+        const wr = ref.warp((v) => { const r = rPad + v[1], ph = -v[0] / rPad; v[0] = sx + r * Math.cos(ph); v[1] = sy + r * Math.sin(ph); }); kill(cs, ex, rot, ref);
+        { const n = shell.subtract(wr); kill(shell, wr); shell = n; }
+        if (p.studPattern && p.tubePattern !== 'none') {
+          const st = Math.min(p.tubeStrut, p.studHMM * 0.25), cell = Math.min(p.tubeCell, (p.studHMM - 2 * st) / 0.8);
+          const wo = wrapOpenings(p.tubePattern, cell, st, R, R - twS, H + st, zTop - st, sx, sy, [], 0, true);
+          for (const c of wo.cutters) { const n = shell.subtract(c); kill(shell, c); shell = n; }
+        }
+        add.push(shell);
+        // one fin in each of the four directions: to the wall if the stud stands against it, otherwise to the rib half a pitch away
+        for (const [dx, dy, deg] of [[1, 0, 0], [0, 1, 90], [-1, 0, 180], [0, -1, 270]]) {
+          const pos = dx ? sx : sy, lim = dx ? inX : inY, sgn = dx || dy;
+          const toWall = Math.abs(sgn * lim - pos) - R < pitch / 2 - R - 0.5;
+          const d = toWall ? lim - (sgn * pos + R) : pitch / 2 - R - p.ribT / 2;     // gap between the stud's outer face and what the fin stands on
+          const z0 = zs - (d + twS) / tl; zFinMin = Math.min(zFinMin, z0);
+          const prof = CrossSection.ofPolygons([[[R + d + 0.5, z0], [R + d + 0.5, Hin], [R - twS, Hin], [R - twS, zs], [R + d, z0]]], 'Positive');
+          const pl = wallCutter(prof, 'y', tf, [0, 0, 0]), pr = pl.rotate([0, 0, deg]); add.push(pr.translate([sx, sy, 0])); kill(prof, pl, pr); fins++;
+          if (toWall) { const key = `${dx ? 'x' : 'y'}${sgn}:${(dx ? sy : sx).toFixed(2)}`; if (!strips.has(key)) { strips.add(key); add.push(dx ? cubeAt(skin, 3, 0, H - t, sgn * (inX + skin / 2), sy) : cubeAt(3, skin, 0, H - t, sx, sgn * (inY + skin / 2))); } }
+        }
+      }
+      const all = add.reduce((a, b) => { const n = a.add(b); kill(a, b); return n; });
+      const b2 = body.add(all); kill(body, all); body = b2;
+      openTop = { cups: studCentres.length, fins, strips: strips.size, spring: zs, rise, finFrom: zFinMin, ring: padH, shell: twS, lean: 28 };
+      if (zFinMin < p.studHMM + p.studClear + 0.5) warnings.push('Open top: the stud fins start below the top of the studs of the course underneath. Use a taller block.');
+    }
     kill(outer);
     // connectivity: keep the main body only; anything the cuts severed is dropped and reported
     let fragmentsRemoved = 0, fragmentVolume = 0;
@@ -1300,7 +1351,7 @@ function createCore(wasm) {
       const sec = body.slice(zCeil);
       const inner = CrossSection.square([W - 2 * w, L - 2 * w], true);
       const cav = inner.subtract(sec);
-      deckPanelD = inscribedDiameter(cav, Math.max(W, L) / 2);
+      deckPanelD = lite ? 0 : inscribedDiameter(cav, Math.max(W, L) / 2);
       kill(sec, inner, cav);
     }
 
@@ -1357,7 +1408,7 @@ function createCore(wasm) {
       pads: padCount, padDepth, clutch: p.clutch,
       sandwich: sand ? { style: p.sandStyle, core: p.sandCore, cell: sand.cell, cellAsked: p.sandCell, strut: sand.s, skinT: sand.skinT, openFrac: sand.openFrac, skinOpen: sand.skinOpen, cells: sand.cells, coreCount: sand.coreCount, tieCount: sand.tieCount, web: sand.web, short: sandS ? { openFrac: sandS.openFrac, cells: sandS.cells, coreCount: sandS.coreCount, web: sandS.web, len: W - 2 * w } : null, arches: sand.arches || (sandS && sandS.arches), archR: sand.archR, len: L - 2 * w, h: H - t, tw: w } : null,
       theta: p.thetaDeg, toe: isWedge ? p.toe : null, heel: isWedge ? p.heel : null, orient: p.orient,
-      bearingArea, deckPanelD, windowList: windows, tubeCentres, studCentres, ribLines, lattice: latticeInfo, strut: p.strut, tubeOpenings, studOpenings, deckOpenings, lat2Openings, lat3Openings, deckOpenFrac, deckSand, deckSlats: deckSlatInfo, lat3OpenFrac, fragmentsRemoved, fragmentVolume, overhangArea, holeTopArea, bridgeArea,
+      bearingArea, deckPanelD, windowList: windows, tubeCentres, studCentres, ribLines, lattice: latticeInfo, strut: p.strut, tubeOpenings, studOpenings, deckOpenings, lat2Openings, lat3Openings, deckOpenFrac, deckSand, deckSlats: deckSlatInfo, lat3OpenFrac, fragmentsRemoved, fragmentVolume, overhangArea, holeTopArea, bridgeArea, openTop,
     };
     return { manifold: placed, stats, warnings, p };
   }
@@ -2674,7 +2725,7 @@ function createCore(wasm) {
       { id: 'bear', name: 'Walls bearing on the course below', detail: `${A_local.toFixed(0)} mm² of effective footprint under the load (${(effFrac * 100).toFixed(0)}% solid); ${sXY.toFixed(0)} MPa`, cap: F_bear },
       { id: 'buck', name: 'Buckling', detail: `${buckWhat}; σcr ${sigCr.toFixed(0)} MPa`, cap: F_buck },
       { id: 'stud', name: 'Stud roots (sideways share)', detail: latFrac > 0 ? `${nStud} studs × ${Math.min(Vshear, Vbend).toFixed(0)} N; ${(latFrac * 100).toFixed(0)}% of the load pushes sideways` : 'no sideways load on a flat block', cap: F_stud },
-    ].map(c => ({ ...c, kg: c.cap / g }));
+    ].filter(c => !(stats.openTop && (c.id === 'deck' || c.id === 'shear'))).map(c => ({ ...c, kg: c.cap / g }));   // an open top has no deck
     const governing = checks.reduce((m, c) => (c.cap < m.cap ? c : m), checks[0]);
     return { mat, patchA, patchW, patchL, checks, governing, capN: governing.cap, capKg: governing.cap / g, effFrac, A_bear, A_local, latFrac };
   }
@@ -3044,6 +3095,7 @@ if (isWorker) {
   // main-thread fallback: expose an async call interface with the same messages
   globalThis.__engineFallback = {
     async call(msg, onInterim) { post = (m) => onInterim && onInterim(m); return handle(msg); },
+    get core() { return core; },   // for command-line tools
   };
 }
 </script>
@@ -3926,7 +3978,7 @@ const DEF = {
   optTargetKg: 200, optMassCap: 15, optTimeWeight: 1.0, optEvals: 60, optShell: true, optWalls: true, optTubes: true, optInfill: true, optCore: true, optSecondary: false, optLayer: true, optHex: true, optTri: true, optSq: true, optBuild: 'both', optKeepWalls: false,
 };
 // The block the page opens on: sandwich walls of hexagons on zigzag plates with round openings, arches in the top corners.
-Object.assign(DEF, { look: 'sandHexZig', gen: 'cut', wallBuild: 'sandwich', sandStyle: 'honeycomb', sandCore: 'zigzag', sandCoreHoles: 'circles', sandHoleAuto: true, sandCell: 12, sandStrut: 0.84, sandArch: true, deckBuild: 'sandwich',
+Object.assign(DEF, { look: 'sandHexZig', openTop: true, gen: 'cut', wallBuild: 'sandwich', sandStyle: 'honeycomb', sandCore: 'zigzag', sandCoreHoles: 'circles', sandHoleAuto: true, sandCell: 12, sandStrut: 0.84, sandArch: true, deckBuild: 'sandwich',
   windowStyle: 'hexLattice', wallCell: 12, strut: 0.84, windowShort: true, core: 'ribs', ribT: 0.84, ribDir: 'x', deckPattern: true, deckCell: 5, tubes: true, tubePattern: 'honeycomb', tubeCell: 12, tubeStrut: 0.84,
   studPattern: true, studHoleFrac: 0.9, lattice2: false, lattice3: 'none', infill: 0, layerH: 0.28, wallAuto: true, deckAuto: true, tubeWallAuto: true, noSupports: true, preset: 'custom' });
 const PRESETS = {
@@ -3938,11 +3990,11 @@ const MATERIAL_NAMES = {
   polymaker_petg: 'Polymaker PETG V2.0', polylite_petg: 'Polymaker PolyLite PETG V6.0', bambu_petg_hf: 'Bambu Lab PETG HF', prusament_petg: 'Prusament PETG', esun_petg: 'eSUN PETG', overture_petg: 'Overture PETG V5',
 };
 let S = { ...DEF };
-try { const saved = JSON.parse(localStorage.getItem('jumpblocks.v5') || 'null'); if (saved && typeof saved === 'object') S = { ...DEF, ...saved }; } catch (e) {}
-const persist = () => { try { localStorage.setItem('jumpblocks.v5', JSON.stringify(S)); } catch (e) {} };
+try { const saved = JSON.parse(localStorage.getItem('jumpblocks.v6') || 'null'); if (saved && typeof saved === 'object') S = { ...DEF, ...saved }; } catch (e) {}
+const persist = () => { try { localStorage.setItem('jumpblocks.v6', JSON.stringify(S)); } catch (e) {} };
 
 const LEGO = { pitch: 8, plate: 3.2, wall: 1.2, deck: 1.0, tubeWall: (6.51 - 4.8) / 2 };
-const GEOM_KEYS = ['gen','archLean','archCell','archStrut','archCurve','archGrid','archShells','archRows','archCore','archPlates','growStyle','growCell','growStrut','growTruss','type','studs','scale','nx','ny','heightPlates','risePlates','orientation','noSupports','bridgeMax','clearance','studClear','clutch','studD','studH','studHollow','studHoleFrac','wall','deck','tubes','tubeWall','core','ribT','ribDir','deckCell','cell','latticeT','windowStyle','windowW','windowH','wallCell','strut','windowShort','wallBuild','sandStyle','sandCore','sandCoreHoles','sandCoreHoleD','sandCell','sandStrut','sandArch','deckBuild','drainHoles','drainD','tubePattern','tubeCell','tubeStrut','deckPattern','studPattern','lattice2','lattice2Style','cell2','strut2','lattice3','cell3','strut3','lattice3Style','layerH','infill'];
+const GEOM_KEYS = ['openTop','gen','archLean','archCell','archStrut','archCurve','archGrid','archShells','archRows','archCore','archPlates','growStyle','growCell','growStrut','growTruss','type','studs','scale','nx','ny','heightPlates','risePlates','orientation','noSupports','bridgeMax','clearance','studClear','clutch','studD','studH','studHollow','studHoleFrac','wall','deck','tubes','tubeWall','core','ribT','ribDir','deckCell','cell','latticeT','windowStyle','windowW','windowH','wallCell','strut','windowShort','wallBuild','sandStyle','sandCore','sandCoreHoles','sandCoreHoleD','sandCell','sandStrut','sandArch','deckBuild','drainHoles','drainD','tubePattern','tubeCell','tubeStrut','deckPattern','studPattern','lattice2','lattice2Style','cell2','strut2','lattice3','cell3','strut3','lattice3Style','layerH','infill'];
 let pinned = null;   // exact parameter set from the optimizer, used verbatim until the user edits geometry
 function coreParams(s) {
   const base = coreParamsRaw(s);
@@ -3952,7 +4004,7 @@ function coreParams(s) {
 }
 function coreParamsRaw(s) {
   return {
-    gen: s.gen === 'arch' ? 'arch' : 'cut', archLean: s.archLean, archCell: s.archCell, archStrut: s.archStrut, archCurve: s.archCurve, archGrid: s.archGrid, archShells: s.archShells, archRows: s.archRows === 'posts' ? 'posts' : 'stagger', archCore: s.archCore === 'web' ? 'web' : 'ties', archPlates: s.archPlates === 0 ? 0 : 1,
+    openTop: !!s.openTop, gen: s.gen === 'arch' ? 'arch' : 'cut', archLean: s.archLean, archCell: s.archCell, archStrut: s.archStrut, archCurve: s.archCurve, archGrid: s.archGrid, archShells: s.archShells, archRows: s.archRows === 'posts' ? 'posts' : 'stagger', archCore: s.archCore === 'web' ? 'web' : 'ties', archPlates: s.archPlates === 0 ? 0 : 1,
     type: s.type === 'wedge' ? 'wedge' : 'brick', studs: s.type !== 'flat',
     scale: s.scale, nx: s.nx, ny: s.ny, heightPlates: s.heightPlates, risePlates: s.risePlates, orientation: s.orientation, noSupports: s.noSupports, bridgeMax: s.bridgeMax,
     clearance: s.clearance, studClear: s.studClear, clutch: s.clutch, studD: s.studD, studH: s.studH, studHollow: s.studHollow, studHoleFrac: s.studHoleFrac,
@@ -4140,6 +4192,7 @@ const CONTROLS = {
   block: [
     { t: 'seg', k: 'type', opts: [['brick', 'Brick'], ['flat', 'Flat top'], ['wedge', 'Wedge']] },
     { t: 'select', k: 'look', label: 'Look', opts: [['custom', 'custom (as set below)'], ['lego', 'LEGO shell'], ['sandHex', 'Sandwich walls · hexagons'], ['sandTri', 'Sandwich walls · triangles'], ['sandSq', 'Sandwich walls · squares'], ['sandHexZig', 'Sandwich walls · hexagons on zigzag plates'], ['cutHex', 'Slab walls · hexagons cut through'], ['arch', 'Arch lattice · no supports'], ['archWebHex', 'Arch lattice · honeycomb walls on a zigzag web · no supports'], ['archWebPosts', 'Arch lattice · posts and triangles on a zigzag web · no supports']], note: s => LOOK_NOTES[s.look] || '' },
+    { t: 'check', k: 'openTop', label: 'Open top and short tubes (lighter, faster)', show: s => !isArch(s) && s.type === 'brick' && s.nx > 1 && s.ny > 1, note: s => s.openTop ? (s.core !== 'ribs' ? 'Needs ribs as the core. This block is built with the deck.' : 'No deck and no band over the walls: the walls run to the top. Each stud is a shell on four fins, closing between them in pointed arches. The tubes are rings as tall as the studs they grip. Ribs run both ways.') : 'Off: a deck under the studs and tubes as tall as the block.' },
     { t: 'group', label: 'Arch lattice', show: s => isArch(s) },
     { t: 'select', k: 'archRows', label: 'Wall openings', opts: [['stagger', 'honeycomb: each row shifted half a cell'], ['posts', 'straight columns: posts, hexagons and triangles']], note: (s) => s.archRows === 'posts' ? 'A post stands on every pier line from the bed to the top. Each column is a window, then hexagons. The head of one opening and the foot of the next make an X between the posts; the space beside the X is an open triangle. Straight-sided arches (arch shape 0) fit the most rows. Tubes and inside plates keep the honeycomb.' + (s.archCore === 'web' ? ' The zigzag web holds each post over the height of the triangles.' : ' With arch ties nothing holds a post over the height of the triangles, and the capacity check shows it; use the zigzag web.') : 'The head of each opening carries the pier between the two openings above it. No upright line is solid from the bed to the top.' },
     { t: 'select', k: 'archCore', label: 'Between the two wall skins', opts: [['ties', 'arch ties at the piers (lightest)'], ['web', 'zigzag web with openings (triangles seen from above)']], note: (s) => s.archCore === 'web' ? (last.stats && last.stats.arch && last.stats.arch.core === 'web' ? `${last.stats.arch.webPlates} upright plates, each from a pier line on one skin to the next pier line on the other. Every plate stands on the bed and has the openings of the skins in the same rows. The capacity check then treats each wall as one panel of two skins.` : 'The wall is too thin for two skins and a web at this scale: arch ties are used.') : 'Short webs across the gap. Each starts on both skins and closes in a pointed arch.' },
@@ -4384,7 +4437,7 @@ function setParam(k, v, live) {
   }
   else {
     S[k] = v;
-    if (GEOM_KEYS.includes(k) && !['type', 'studs', 'scale', 'nx', 'ny', 'heightPlates', 'risePlates', 'clearance', 'clutch', 'studClear', 'orientation', 'bridgeMax'].includes(k) && S.gen !== 'arch') S.look = 'custom';
+    if (GEOM_KEYS.includes(k) && !['type', 'studs', 'scale', 'nx', 'ny', 'heightPlates', 'risePlates', 'clearance', 'clutch', 'studClear', 'orientation', 'bridgeMax', 'openTop'].includes(k) && S.gen !== 'arch') S.look = 'custom';
     if (S.gen === 'arch' && ['archRows', 'archCore', 'archPlates'].includes(k)) S.look = archLookOf(S);
     if (['layerH', 'nozzle', 'outerW', 'innerW', 'infillW', 'wallLoops', 'topLayers', 'bottomLayers', 'infill', 'anchors', 'overlap', 'thickBridges', 'thickInternalBridges', 'flowRatio', 'density', 'maxFlow', 'solidBelowArea'].includes(k)) S.preset = 'custom';
     if (k === 'type' && v === 'wedge' && !['auto', 'baseUp'].includes(S.orientation)) S.orientation = 'auto';
@@ -4437,6 +4490,7 @@ function renderOverlay(st, warnings) {
   const chips = [name, `${st.size.map(v => v.toFixed(1)).join(' × ')} mm`, over ? 'exceeds 250³ bed' : 'fits Kobra S1 bed'];
   if (st.tubeOD) chips.push(`grip: tube Ø${st.tubeOD.toFixed(1)}${st.pads ? ` · ${st.pads} fins` : ''}`);
   if (st.deckSand) chips.push(`deck: 2 skins × ${st.deckSand.skin.toFixed(2)} mm`);
+  if (st.openTop) chips.push(`open top · ${st.openTop.cups} stud shells on ${st.openTop.fins} fins · grip rings ${st.openTop.ring.toFixed(1)} mm tall`);
   if (st.sandwich) chips.push(`walls ${(st.sandwich.openFrac * 100).toFixed(0)}%${st.sandwich.short ? ` / ${(st.sandwich.short.openFrac * 100).toFixed(0)}%` : ''} open · ${st.sandwich.cells} cells of ${st.sandwich.cell.toFixed(1)} mm · ${st.sandwich.core === 'zigzag' ? (st.sandwich.web ? `${st.sandwich.coreCount} zigzag plates${st.sandwich.web.holeD > 0 ? ` · round openings ${st.sandwich.web.holeD.toFixed(1)} mm` : ''}` : 'no core') : `${st.sandwich.coreCount} ${st.sandwich.core === 'truss' ? 'diagonals' : st.sandwich.core}`}${st.sandwich.tieCount ? ` + ${st.sandwich.tieCount} ties` : ''}${st.sandwich.arches ? ' · arches' : ''}`);
   if (st.arch) { chips.push(`arch lattice · ${st.arch.pattern === 'posts' ? 'posts and triangles' : 'honeycomb'} · ${st.arch.core === 'web' ? `zigzag web (${st.arch.webPlates} plates)` : 'arch ties'} · ${st.studs ? (st.arch.studPlates ? 'plates under the studs' : `${st.arch.fins} fins under the studs`) : 'flat top'}`); chips.push(`lean ≤ ${st.arch.lean}° (built ${st.arch.leanBuilt}°) · ${st.arch.openings} openings of ${st.arch.cell.toFixed(1)} mm · ${(st.arch.openFrac * 100).toFixed(0)}% open`); chips.push(st.bridgeArea <= 0.2 && st.overhangArea <= 1 ? 'mesh audit: no level underside, no face past the limit' : `mesh audit: ${st.bridgeArea.toFixed(1)} mm² level, ${st.overhangArea.toFixed(1)} mm² past the limit`); }
   if (S.type === 'wedge') chips.push(`slope ${st.theta.toFixed(1)}°`);
