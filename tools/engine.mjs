@@ -28,5 +28,5 @@ export async function loadEngine(page = PAGE) {
     const res = r && r.type === 'results' ? r : quick;
     return { grams: res.mass.grams, hours: res.mass.timeS / 3600, kg: res.strength.capKg, governs: res.strength.governing.name, checks: res.strength.checks, stats: res.stats, warnings: geom ? geom.warnings : [], mass: res.mass };
   };
-  return { run, build, DEF, LOOKS, coreParamsRaw, get core() { return eng.core; } };
+  return { run, build, DEF, LOOKS, coreParamsRaw, get core() { return eng.core; }, get wasm() { return eng.wasm; } };
 }

@@ -888,6 +888,21 @@ function createCore(wasm) {
         if (!lite) parts.push(cubeAt(lenS, w, hInt - 0.2, hInt + 0.2, 0, side * (L / 2 - w / 2)));
       }
       kill(sand.wall, sandS.wall, rot);
+      // open top: the corner posts are square tubes with a skin-thick wall, open at both ends, so a slicer has nothing to fill
+      if (lite && w - 2 * sand.skinT >= 2) for (const sx of [-1, 1]) for (const sy of [-1, 1]) cuts.push(cubeAt(w - 2 * sand.skinT, w - 2 * sand.skinT, -1, H + 1, sx * (W / 2 - w / 2), sy * (L / 2 - w / 2)));
+      // and see-through: one column of tall six-sided openings through each pair of opposite faces. Every opening ends in a point
+      // top and bottom (28° off vertical), so none has a level edge. A strut-thick frame stays at the four edges, top and bottom.
+      if (lite && w - 4 * sand.skinT >= 3) {
+        const sk = sand.skinT, a2 = (w - 4 * sk) / 2, ln = 28 * Math.PI / 180, rise = a2 / Math.tan(ln), gapZ = sk / Math.sin(ln), total = H - 2 * sk;
+        let n = Math.max(1, Math.round(total / (2 * rise + gapZ + 3))); while (n > 1 && total / n - gapZ - 2 * rise < 0.5) n--;
+        const pitchZ = total / n, hc = pitchZ - gapZ, side = hc - 2 * rise;
+        if (side >= 0) {
+          const polys = []; for (let k = 0; k < n; k++) { const z0 = sk + k * pitchZ + gapZ / 2; polys.push([[0, z0], [a2, z0 + rise], [a2, z0 + rise + side], [0, z0 + hc], [-a2, z0 + rise + side], [-a2, z0 + rise]]); }
+          const prof = CrossSection.ofPolygons(polys, 'Positive');
+          for (const sx of [-1, 1]) for (const sy of [-1, 1]) { const c = [sx * (W / 2 - w / 2), sy * (L / 2 - w / 2), 0]; cuts.push(wallCutter(prof, 'x', w + 0.1, c), wallCutter(prof, 'y', w + 0.1, c)); }
+          kill(prof);
+        }
+      }
     }
 
     // internal features — built to full height, trimmed by outer later (wedge) or ending inside the deck (brick)
@@ -3095,7 +3110,7 @@ if (isWorker) {
   // main-thread fallback: expose an async call interface with the same messages
   globalThis.__engineFallback = {
     async call(msg, onInterim) { post = (m) => onInterim && onInterim(m); return handle(msg); },
-    get core() { return core; },   // for command-line tools
+    get core() { return core; }, get wasm() { return wasm; },   // for command-line tools
   };
 }
 </script>
@@ -3990,8 +4005,8 @@ const MATERIAL_NAMES = {
   polymaker_petg: 'Polymaker PETG V2.0', polylite_petg: 'Polymaker PolyLite PETG V6.0', bambu_petg_hf: 'Bambu Lab PETG HF', prusament_petg: 'Prusament PETG', esun_petg: 'eSUN PETG', overture_petg: 'Overture PETG V5',
 };
 let S = { ...DEF };
-try { const saved = JSON.parse(localStorage.getItem('jumpblocks.v6') || 'null'); if (saved && typeof saved === 'object') S = { ...DEF, ...saved }; } catch (e) {}
-const persist = () => { try { localStorage.setItem('jumpblocks.v6', JSON.stringify(S)); } catch (e) {} };
+try { const saved = JSON.parse(localStorage.getItem('jumpblocks.v7') || 'null'); if (saved && typeof saved === 'object') S = { ...DEF, ...saved }; } catch (e) {}
+const persist = () => { try { localStorage.setItem('jumpblocks.v7', JSON.stringify(S)); } catch (e) {} };
 
 const LEGO = { pitch: 8, plate: 3.2, wall: 1.2, deck: 1.0, tubeWall: (6.51 - 4.8) / 2 };
 const GEOM_KEYS = ['openTop','gen','archLean','archCell','archStrut','archCurve','archGrid','archShells','archRows','archCore','archPlates','growStyle','growCell','growStrut','growTruss','type','studs','scale','nx','ny','heightPlates','risePlates','orientation','noSupports','bridgeMax','clearance','studClear','clutch','studD','studH','studHollow','studHoleFrac','wall','deck','tubes','tubeWall','core','ribT','ribDir','deckCell','cell','latticeT','windowStyle','windowW','windowH','wallCell','strut','windowShort','wallBuild','sandStyle','sandCore','sandCoreHoles','sandCoreHoleD','sandCell','sandStrut','sandArch','deckBuild','drainHoles','drainD','tubePattern','tubeCell','tubeStrut','deckPattern','studPattern','lattice2','lattice2Style','cell2','strut2','lattice3','cell3','strut3','lattice3Style','layerH','infill'];
@@ -4192,7 +4207,7 @@ const CONTROLS = {
   block: [
     { t: 'seg', k: 'type', opts: [['brick', 'Brick'], ['flat', 'Flat top'], ['wedge', 'Wedge']] },
     { t: 'select', k: 'look', label: 'Look', opts: [['custom', 'custom (as set below)'], ['lego', 'LEGO shell'], ['sandHex', 'Sandwich walls · hexagons'], ['sandTri', 'Sandwich walls · triangles'], ['sandSq', 'Sandwich walls · squares'], ['sandHexZig', 'Sandwich walls · hexagons on zigzag plates'], ['cutHex', 'Slab walls · hexagons cut through'], ['arch', 'Arch lattice · no supports'], ['archWebHex', 'Arch lattice · honeycomb walls on a zigzag web · no supports'], ['archWebPosts', 'Arch lattice · posts and triangles on a zigzag web · no supports']], note: s => LOOK_NOTES[s.look] || '' },
-    { t: 'check', k: 'openTop', label: 'Open top and short tubes (lighter, faster)', show: s => !isArch(s) && s.type === 'brick' && s.nx > 1 && s.ny > 1, note: s => s.openTop ? (s.core !== 'ribs' ? 'Needs ribs as the core. This block is built with the deck.' : 'No deck and no band over the walls: the walls run to the top. Each stud is a shell on four fins, closing between them in pointed arches. The tubes are rings as tall as the studs they grip. Ribs run both ways.') : 'Off: a deck under the studs and tubes as tall as the block.' },
+    { t: 'check', k: 'openTop', label: 'Open top and short tubes (lighter, faster)', show: s => !isArch(s) && s.type === 'brick' && s.nx > 1 && s.ny > 1, note: s => s.openTop ? (s.core !== 'ribs' ? 'Needs ribs as the core. This block is built with the deck.' : 'No deck and no band over the walls: the walls run to the top. The corner posts are hollow square tubes with openings through all four faces. Each stud is a shell on four fins, closing between them in pointed arches. The tubes are rings as tall as the studs they grip. Ribs run both ways.') : 'Off: a deck under the studs and tubes as tall as the block.' },
     { t: 'group', label: 'Arch lattice', show: s => isArch(s) },
     { t: 'select', k: 'archRows', label: 'Wall openings', opts: [['stagger', 'honeycomb: each row shifted half a cell'], ['posts', 'straight columns: posts, hexagons and triangles']], note: (s) => s.archRows === 'posts' ? 'A post stands on every pier line from the bed to the top. Each column is a window, then hexagons. The head of one opening and the foot of the next make an X between the posts; the space beside the X is an open triangle. Straight-sided arches (arch shape 0) fit the most rows. Tubes and inside plates keep the honeycomb.' + (s.archCore === 'web' ? ' The zigzag web holds each post over the height of the triangles.' : ' With arch ties nothing holds a post over the height of the triangles, and the capacity check shows it; use the zigzag web.') : 'The head of each opening carries the pier between the two openings above it. No upright line is solid from the bed to the top.' },
     { t: 'select', k: 'archCore', label: 'Between the two wall skins', opts: [['ties', 'arch ties at the piers (lightest)'], ['web', 'zigzag web with openings (triangles seen from above)']], note: (s) => s.archCore === 'web' ? (last.stats && last.stats.arch && last.stats.arch.core === 'web' ? `${last.stats.arch.webPlates} upright plates, each from a pier line on one skin to the next pier line on the other. Every plate stands on the bed and has the openings of the skins in the same rows. The capacity check then treats each wall as one panel of two skins.` : 'The wall is too thin for two skins and a web at this scale: arch ties are used.') : 'Short webs across the gap. Each starts on both skins and closes in a pointed arch.' },
