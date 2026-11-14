@@ -4617,6 +4617,12 @@ const esc = (s) => String(s).replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&
 let downloads = null;
 async function initDownloads() {
   try { if (window.claude && window.claude.use) downloads = await window.claude.use('downloads'); } catch (e) { downloads = null; }
+  // outside Claude (for example on github.io) save through an ordinary browser download
+  if (!downloads) downloads = { save: async ({ filename, data }) => {
+    const url = URL.createObjectURL(new Blob([data], { type: 'application/zip' }));
+    const a = document.createElement('a'); a.href = url; a.download = filename; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  } };
   const note = $('saveNote');
   if (!downloads) { note.textContent = 'Saving files is not available in this view.'; $('btnSave').disabled = true; const rb = $('btnRampSave'); if (rb) rb.disabled = true; }
   else { $('btnSave').disabled = !last.mass; }
