@@ -480,6 +480,13 @@ function createCore(wasm) {
           push(pts);
         }
       }
+    } else if (style === 'pointhex') {
+      // hexagons standing on a point: upright sides 0.45·cell long, roof and floor edges 45° off vertical. No level edge.
+      const cap = cell / 2, sv = 0.45 * cell, dy = sv + cap;
+      for (let r = -1; r < Math.ceil((y1 - y0) / dy) + 2; r++) for (let c = -1; c < Math.ceil((x1 - x0) / cell) + 2; c++) {
+        const cx = x0 + cell / 2 + c * cell + (r % 2 ? cell / 2 : 0), cy = y0 + cap + sv / 2 + r * dy;
+        push([[cx, cy - sv / 2 - cap], [cx + cell / 2, cy - sv / 2], [cx + cell / 2, cy + sv / 2], [cx, cy + sv / 2 + cap], [cx - cell / 2, cy + sv / 2], [cx - cell / 2, cy - sv / 2]]);
+      }
     } else if (style === 'triangles') {
       const a = cell, hgt = a * Math.sqrt(3) / 2;
       for (let r = -1; r < Math.ceil((y1 - y0) / hgt) + 2; r++) for (let c = -1; c < Math.ceil((x1 - x0) / a) + 2; c++) {
@@ -664,6 +671,8 @@ function createCore(wasm) {
         for (let k = N; k >= 0; k--) band.push(pt(archR - s / 2, phiM * k / N));
         let a2 = 0; for (let i = 0; i < band.length; i++) { const p0 = band[i], p1 = band[(i + 1) % band.length]; a2 += p0[0] * p1[1] - p1[0] * p0[1]; }
         polys.push(a2 < 0 ? band.reverse() : band);
+        // pointed hexagons: upright struts from the arch to the top rail, so the rail over the open corner is not one long bridge
+        if (style === 'pointhex') { const n = Math.max(1, Math.round(arch.uEnd / 4)); for (let k = 1; k <= n; k++) { const d = arch.uEnd * k / (n + 1), u = side ? w - d : d, zA = zc + Math.sqrt(Math.max(0, archR * archR - ((side ? u - xcR : xcL - u)) ** 2)); if (zTop - zA > s) polys.push(barPoly([u, zA], [u, zTop], s)); } }
         for (const fr of [0.35, 0.7]) { const f = phiM * fr; lastPanelArchTies.push(side ? [xcR + archR * Math.cos(f), zc + archR * Math.sin(f)] : [xcL - archR * Math.cos(f), zc + archR * Math.sin(f)]); }
       }
     }
@@ -681,7 +690,9 @@ function createCore(wasm) {
       for (const v of verts.values()) {
         const d = [v[0] - leftB(v[1]) + s / 2, rightB(v[1]) - v[0] + s / 2, v[1], topB(v[0]) - v[1] + s / 2], m = Math.min(...d);   // measured to the outer face of the frame or arch
         if (m > cell * 0.9) continue;
-        const tgt = d[0] === m ? [leftB(v[1]), v[1]] : d[1] === m ? [rightB(v[1]), v[1]] : d[2] === m ? [v[0], s / 2] : [v[0], topB(v[0])];
+        let tgt = d[0] === m ? [leftB(v[1]), v[1]] : d[1] === m ? [rightB(v[1]), v[1]] : d[2] === m ? [v[0], s / 2] : [v[0], topB(v[0])];
+        // pointed hexagons: a tie to the side is not level; it rises 45° from the frame to the vertex
+        if (style === 'pointhex' && (d[0] === m || d[1] === m)) { const tz = Math.max(s / 2, v[1] - Math.max(0, m - s / 2)); tgt = [d[0] === m ? leftB(tz) : rightB(tz), tz]; }
         const q = barPoly(v, tgt, useTruss ? w2 : s); if (q) polys.push(q);
       }
     }
@@ -703,7 +714,7 @@ function createCore(wasm) {
     // Snap the cell so whole rows fill the wall height exactly (cell edges on the rail centre lines): the lattice then takes all the
     // space there is. Rows needed for n rows of cell c: hexagons (n + ½)·c, triangles n·c·√3/2, squares n·c. The row count whose
     // cell is nearest the requested size wins.
-    const Hc = h - s - 0.03, rowsH = (n) => style === 'honeycomb' ? n + 0.5 : style === 'triangles' ? n * Math.sqrt(3) / 2 : n;
+    const Hc = h - s - 0.03, rowsH = (n) => style === 'pointhex' ? 0.95 * n + 0.5 : style === 'honeycomb' ? n + 0.5 : style === 'triangles' ? n * Math.sqrt(3) / 2 : n;
     let cellFit = Hc / rowsH(1);
     for (let n = 2; n <= 40; n++) { const cn = Hc / rowsH(n); if (cn < 3 * s) break; if (Math.abs(cn - cell) < Math.abs(cellFit - cell)) cellFit = cn; }
     // corner arches: as tall as 70% of the wall, but never reaching past 28% of its length from either end
@@ -750,8 +761,9 @@ function createCore(wasm) {
       const gap = tw - 2 * s, ov = Math.min(0.25, s / 3);
       const pStyle = style === 'honeycomb' ? cellFit * Math.sqrt(3) / 2 : style === 'triangles' ? cellFit / 2 : cellFit;
       let P = pStyle;
-      if (cols.length > 1) { const d = []; for (let i = 1; i < cols.length; i++) d.push(cols[i] - cols[i - 1]); d.sort((a, b) => a - b); const md = d[d.length >> 1]; if (md > 0.5 * pStyle && md < 1.5 * pStyle) P = md; }
-      const u0 = (cols.length ? cols[0] : len / 2) - P / 2;
+      // pointed hexagons: one fold per cell width, on the upright struts of every second row; the plate between two folds passes behind the cells of that row
+      if (style !== 'pointhex' && cols.length > 1) { const d = []; for (let i = 1; i < cols.length; i++) d.push(cols[i] - cols[i - 1]); d.sort((a, b) => a - b); const md = d[d.length >> 1]; if (md > 0.5 * pStyle && md < 1.5 * pStyle) P = md; }
+      const u0 = (style === 'pointhex' && centres.length ? centres.reduce((a, c) => c[1] < a[1] - 0.01 ? c : a)[0] : cols.length ? cols[0] : len / 2) - P / 2;
       const k0 = Math.floor(-u0 / P) - 1, k1 = Math.ceil((len - u0) / P) + 1, polys = [], legs = [];
       const xAt = (k) => (((k % 2) + 2) % 2 === 0 ? s : tw - s);
       const legLen = Math.hypot(gap, P);
@@ -2747,7 +2759,7 @@ function createCore(wasm) {
     }
     if (stats.sandwich) {   // sandwich long walls: skin struts between cell vertices are the columns; ties/posts fix the out-of-plane length
       const sw = stats.sandwich;
-      const edge = sw.style === 'honeycomb' ? sw.cell / Math.sqrt(3) : sw.cell;     // strut length between vertices
+      const edge = sw.style === 'honeycomb' ? sw.cell / Math.sqrt(3) : sw.style === 'pointhex' ? sw.cell * Math.SQRT1_2 : sw.cell;     // strut length between vertices
       const b = sw.strut, tsk = sw.skinT;
       const Imin = Math.min(tsk * b ** 3, b * tsk ** 3) / 12, A1 = b * tsk;
       // ties, truss and posts brace every vertex. With zigzag plates the skins are held as one panel (below).
@@ -4045,8 +4057,8 @@ const DEF = {
   optTargetKg: 200, optMassCap: 15, optTimeWeight: 1.0, optEvals: 60, optShell: true, optWalls: true, optTubes: true, optInfill: true, optCore: true, optSecondary: false, optLayer: true, optHex: true, optTri: true, optSq: true, optBuild: 'both', optKeepWalls: false,
 };
 // The block the page opens on: sandwich walls of hexagons on zigzag plates with round openings, arches in the top corners.
-Object.assign(DEF, { look: 'sandHexZig', openTop: true, gen: 'cut', wallBuild: 'sandwich', sandStyle: 'honeycomb', sandCore: 'zigzag', sandCoreHoles: 'circles', sandHoleAuto: true, sandCell: 12, sandStrut: 0.84, sandArch: true, deckBuild: 'sandwich',
-  windowStyle: 'hexLattice', wallCell: 12, strut: 0.84, windowShort: true, core: 'ribs', ribT: 0.84, ribDir: 'x', deckPattern: true, deckCell: 5, tubes: true, tubePattern: 'honeycomb', tubeCell: 12, tubeStrut: 0.84,
+Object.assign(DEF, { look: 'sandHexZig', openTop: true, gen: 'cut', wallBuild: 'sandwich', sandStyle: 'pointhex', sandCore: 'zigzag', sandCoreHoles: 'circles', sandHoleAuto: true, sandCell: 14, sandStrut: 0.84, sandArch: true, deckBuild: 'sandwich',
+  windowStyle: 'hexLattice', wallCell: 14, strut: 0.84, windowShort: true, core: 'ribs', ribT: 0.84, ribDir: 'x', deckPattern: true, deckCell: 5, tubes: true, tubePattern: 'honeycomb', tubeCell: 12, tubeStrut: 0.84,
   studPattern: true, studHoleFrac: 0.9, lattice2: false, lattice3: 'none', infill: 0, layerH: 0.28, wallAuto: true, deckAuto: true, tubeWallAuto: true, noSupports: true, preset: 'custom' });
 const PRESETS = {
   orca: { layerH: 0.2, nozzle: 0.4, outerW: 0.42, innerW: 0.45, infillW: 0.45, wallLoops: 2, topLayers: 5, bottomLayers: 3, infill: 0.15, anchors: true, overlap: 0.15, thickBridges: false, thickInternalBridges: true, flowRatio: 0.96, density: 1.27, maxFlow: 12, solidBelowArea: 15 },
@@ -4057,8 +4069,8 @@ const MATERIAL_NAMES = {
   polymaker_petg: 'Polymaker PETG V2.0', polylite_petg: 'Polymaker PolyLite PETG V6.0', bambu_petg_hf: 'Bambu Lab PETG HF', prusament_petg: 'Prusament PETG', esun_petg: 'eSUN PETG', overture_petg: 'Overture PETG V5',
 };
 let S = { ...DEF };
-try { const saved = JSON.parse(localStorage.getItem('jumpblocks.v9') || 'null'); if (saved && typeof saved === 'object') S = { ...DEF, ...saved }; } catch (e) {}
-const persist = () => { try { localStorage.setItem('jumpblocks.v9', JSON.stringify(S)); } catch (e) {} };
+try { const saved = JSON.parse(localStorage.getItem('jumpblocks.v11') || 'null'); if (saved && typeof saved === 'object') S = { ...DEF, ...saved }; } catch (e) {}
+const persist = () => { try { localStorage.setItem('jumpblocks.v11', JSON.stringify(S)); } catch (e) {} };
 
 const LEGO = { pitch: 8, plate: 3.2, wall: 1.2, deck: 1.0, tubeWall: (6.51 - 4.8) / 2 };
 const GEOM_KEYS = ['openTop','gen','archLean','archCell','archStrut','archCurve','archGrid','archShells','archRows','archCore','archPlates','growStyle','growCell','growStrut','growTruss','type','studs','scale','nx','ny','heightPlates','risePlates','orientation','noSupports','bridgeMax','clearance','studClear','clutch','studD','studH','studHollow','studHoleFrac','wall','deck','tubes','tubeWall','core','ribT','ribDir','deckCell','cell','latticeT','windowStyle','windowW','windowH','wallCell','strut','windowShort','wallBuild','sandStyle','sandCore','sandCoreHoles','sandCoreHoleD','sandCell','sandStrut','sandArch','deckBuild','drainHoles','drainD','tubePattern','tubeCell','tubeStrut','deckPattern','studPattern','lattice2','lattice2Style','cell2','strut2','lattice3','cell3','strut3','lattice3Style','layerH','infill'];
@@ -4228,7 +4240,7 @@ const sandLook = (style) => ({ wallBuild: 'sandwich', sandStyle: style, sandCore
 const LOOKS = {
   lego: { gen: 'cut', wallBuild: 'solid', sandArch: false, deckBuild: 'solid', core: 'ribs', windowStyle: 'gothic', deckPattern: false, tubePattern: 'none', studPattern: false, lattice2: false, lattice3: 'none', wallAuto: true, deckAuto: true, tubeWallAuto: true },
   sandHex: sandLook('honeycomb'), sandTri: sandLook('triangles'), sandSq: sandLook('squares'),
-  sandHexZig: { ...sandLook('honeycomb'), sandCore: 'zigzag', sandCoreHoles: 'circles', sandHoleAuto: true, sandStrut: 0.84, strut: 0.84, tubeStrut: 0.84, ribT: 0.84, layerH: 0.28 },
+  sandHexZig: { ...sandLook('pointhex'), sandCell: 14, wallCell: 14, sandCore: 'zigzag', sandCoreHoles: 'circles', sandHoleAuto: true, sandStrut: 0.84, strut: 0.84, tubeStrut: 0.84, ribT: 0.84, layerH: 0.28 },
   cutHex: { ...sandLook('honeycomb'), wallBuild: 'solid', sandArch: false, deckBuild: 'solid' },
   arch: { gen: 'arch', archLean: 30, archCell: 7, archStrut: 0.9, archCurve: 0.5, archGrid: 0, archShells: 2, archRows: 'stagger', archCore: 'ties', archPlates: 1, tubes: true, wallAuto: true, tubeWallAuto: true, infill: 0, layerH: 0.24, noSupports: true, preset: 'custom' },
   archWebHex: { gen: 'arch', archLean: 30, archCell: 10, archStrut: 0.84, archCurve: 0, archGrid: 0, archShells: 2, archRows: 'stagger', archCore: 'web', archPlates: 0, tubes: true, wallAuto: true, tubeWallAuto: true, infill: 0, layerH: 0.28, noSupports: true, preset: 'custom' },
@@ -4242,7 +4254,7 @@ const LOOK_NOTES = {
   sandHex: 'All four walls: two hexagon skins on one grid, tied together; pointed arches in the top corners of each wall. The deck: a hexagon skin on top, tied to a lower skin of straight slats that run from support to support. Change cell size and strut under Side walls.',
   sandTri: 'All four walls: two triangle skins on one grid, tied together; pointed arches in the top corners of each wall. The deck: a triangle skin on top, tied to a lower skin of straight slats that run from support to support. Change cell size and strut under Side walls.',
   sandSq: 'All four walls: two square skins on one grid, tied together; pointed arches in the top corners of each wall. The deck: a square skin on top, tied to a lower skin of straight slats that run from support to support. Change cell size and strut under Side walls.',
-  sandHexZig: 'All four walls: two hexagon skins on one grid. Upright plates run from skin to skin in a zigzag, so each wall is a row of triangles seen from above. One round opening goes through the plates behind each hexagon. The deck is the same as in the hexagon sandwich look. Set the plates and their openings under Side walls. The Optimize tab finds the opening diameter.',
+  sandHexZig: 'All four walls: two skins of hexagons that stand on a point (edges 45° off upright, no level edge), on one grid. Upright plates run from skin to skin in a zigzag, so each wall is a row of triangles seen from above. One round opening goes through the plates behind each hexagon. The deck is the same as in the hexagon sandwich look. Set the plates and their openings under Side walls. The Optimize tab finds the opening diameter.',
   cutHex: 'Walls stay one slab; hexagon cells are cut through it.',
   arch: 'Made to print with supports off. Every part is a thin upright plate or round shell. Every opening and every lower edge closes in a pointed arch, so nothing leans more than the limit and nothing spans a gap: no bridges, no level undersides, no deck slab. Brick and flat top only; a wedge falls back to the slab generator.',
   archWebHex: 'The arch lattice with honeycomb wall skins on a zigzag web: upright plates with openings run from skin to skin, so each wall is a row of triangles seen from above. No plates under the studs: each stud shell hangs from short fins on the walls and tubes. Straight-sided arches. Made to print with supports off.',
@@ -4316,7 +4328,7 @@ const CONTROLS = {
     { t: 'group', label: 'Side walls' },
     { t: 'select', k: 'wallBuild', label: 'Walls', opts: [['solid', 'one slab, pattern cut through'], ['sandwich', 'sandwich, all four: two lattice skins + core (see-through)']], show: s => s.type !== 'wedge' && s.nx > 1 && s.ny > 1 },
     { t: 'note', text: s => `Sandwich: every wall stays ${fmt(Math.max(0.8, LEGO.pitch * s.scale / 2 - s.clearance - s.studD * s.scale / 2 + s.clutch), 1)} mm thick. Outer and inner skins are the same lattice on the same grid${s.sandCore === 'zigzag' ? '' : ', so every cell is see-through'}. Full-thickness rails top and bottom (the bottom rail is the stud fit face). The core joins the skins.`, show: s => s.wallBuild === 'sandwich' },
-    { t: 'select', k: 'sandStyle', label: 'Sandwich skin lattice', opts: [['honeycomb', 'hexagons'], ['triangles', 'triangles'], ['squares', 'squares']], show: s => s.wallBuild === 'sandwich' },
+    { t: 'select', k: 'sandStyle', label: 'Sandwich skin lattice', opts: [['pointhex', 'pointed hexagons (no level edge)'], ['honeycomb', 'hexagons'], ['triangles', 'triangles'], ['squares', 'squares']], show: s => s.wallBuild === 'sandwich' },
     { t: 'select', k: 'sandCore', label: 'Sandwich core', opts: [['ties', 'ties: a short strut through the gap at every vertex'], ['truss', 'truss: a diagonal strut along every cell edge, skin to skin'], ['zigzag', 'zigzag plates: upright, folded from skin to skin (triangles seen from above)']], show: s => s.wallBuild === 'sandwich', note: s => s.sandCore === 'truss' ? 'Each diagonal hides behind its cell edge when you look straight at the wall. A diagonal that would need support is replaced by a tie.' : s.sandCore === 'zigzag' ? (zigWeb() ? `${zigCount('plates')} upright plates, ${zigWeb().t.toFixed(2)} mm thick, ${zigWeb().angle.toFixed(0)}° to the wall. One fold is between every two cell columns, on the inner and the outer skin in turn. Each plate is as tall as the wall, so it prints without a bridge. Seen straight on, solid plates close the view through the wall. The capacity check treats the two skins and the plates as one panel.` : (last.stats && last.stats.sandwich ? 'The wall is too thin for two skins and plates at this scale: the wall has no core.' : '')) : '' },
     { t: 'select', k: 'sandCoreHoles', label: 'Openings in the zigzag plates', opts: [['none', 'none: solid plates'], ['circles', 'round: one opening behind each cell']], show: s => s.wallBuild === 'sandwich' && s.sandCore === 'zigzag', note: s => s.sandCoreHoles !== 'circles' ? '' : (zigWeb() && zigWeb().holeD > 0 ? `${zigCount('holes')} openings of ${zigWeb().holeD.toFixed(1)} mm. Each opening is at the height of its cell and square to its plate, so the straight view through the wall is open there (${(last.stats.sandwich.openFrac * 100).toFixed(0)}% of the long walls). The top of a round opening overhangs: ${((last.stats.holeTopArea || 0) / 100).toFixed(2)} cm² on this block. The overhang check warns above 0.5 cm², and the optimizer rejects such a block.` : (zigWeb() ? 'No openings fit: the diameter is under two strut widths.' : '')) },
     { t: 'autorange', k: 'sandCoreHoleD', auto: 'sandHoleAuto', label: 'Opening diameter', min: 1, max: 12, step: 0.1, unit: 'mm', autoVal: s => (zigWeb() && zigWeb().holeMax) || s.sandCoreHoleD, autoLabel: 'largest that leaves one strut width of plate all round', show: s => s.wallBuild === 'sandwich' && s.sandCore === 'zigzag' && s.sandCoreHoles === 'circles', note: s => zigWeb() ? `Largest that fits: ${zigWeb().holeMax.toFixed(1)} mm${!s.sandHoleAuto && zigWeb().holeD > 0 && zigWeb().holeD < s.sandCoreHoleD - 0.05 ? ` (built: ${zigWeb().holeD.toFixed(1)} mm)` : ''}. Under ${(2 * last.stats.sandwich.strut).toFixed(1)} mm no openings are built. The Optimize tab finds the best diameter.` : '' },
