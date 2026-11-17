@@ -831,6 +831,7 @@ function createCore(wasm) {
   }
 
   function buildBlock(params) {
+    if (params.pack) return buildPack(params);
     if (params.fold) return buildFold(params);
     if ((params.gen || DEFAULTS.gen) === 'grow') return buildGrown(params);
     if ((params.gen || DEFAULTS.gen) === 'arch') {
@@ -1495,6 +1496,75 @@ function createCore(wasm) {
   }
 
 
+
+
+  // Flat-pack plate: every part prints lying flat and the parts slot together by hand. A top panel with the stud rings,
+  // four hexagon-lattice walls, and a diagonal grid of panels that cross in half slots. Each stud of the plate below sits
+  // in a square cell of the grid. Shown laid out as it prints.
+  function buildPack(params) {
+    const r0 = buildBlock({ ...params, pack: false }); kill(r0.manifold);
+    const p = r0.p, { W, L, H, pitch } = p, R = p.studDMM / 2, q2 = Math.SQRT2, cl = 0.2;
+    const tw = params.packWall || 3, tg = pitch / q2 - 2 * R, tT = 1.68, hp = H - tT, bar = 1.26, post = 1.68, a = 6.5, du = a + bar, dv = du * 0.866, Rh = a / Math.sqrt(3);
+    const uni = (xs) => xs.reduce((x, y) => { const c = x.add(y); kill(x, y); return c; });
+    const bx = (xa, xb, ya, yb, z0, z1) => cubeAt(Math.abs(xb - xa), Math.abs(yb - ya), z0, z1, (xa + xb) / 2, (ya + yb) / 2);
+    const xs = [], ys = [], studs = [];
+    for (let i = 0; i < p.nx; i++) xs.push((i - (p.nx - 1) / 2) * pitch);
+    for (let j = 0; j < p.ny; j++) ys.push((j - (p.ny - 1) / 2) * pitch);
+    for (const x of xs) for (const y of ys) studs.push([x, y]);
+    // grid panels: family 1 on lines x + y = c (s = (x − y)/√2), family −1 on lines x − y = c (s = (x + y)/√2)
+    const hx = W / 2 - tw - 0.4, hy = L / 2 - tw - 0.4, off = ((p.nx + p.ny) % 2 ? 0 : pitch / 2), panels = [];
+    const range = (f, c) => f > 0 ? [Math.max(q2 * (-hx - c / 2), q2 * (c / 2 - hy)), Math.min(q2 * (hx - c / 2), q2 * (c / 2 + hy))] : [Math.max(q2 * (-hx - c / 2), q2 * (c / 2 - hy)), Math.min(q2 * (hx - c / 2), q2 * (hy + c / 2))];
+    const at = (f, c, t) => f > 0 ? [c / 2 + t / q2, c / 2 - t / q2] : [c / 2 + t / q2, -c / 2 + t / q2];
+    for (const f of [1, -1]) for (let k = -12; k <= 12; k++) { const c = k * pitch + off, [s0, s1] = range(f, c); if (s1 - s0 > 30) panels.push({ f, c, s0, s1, slots: [], posts: [], tabs: [] }); }
+    for (const P of panels) {
+      for (const Q of panels) if (Q.f !== P.f) { const t = Q.c / q2, tq = P.c / q2; if (t > P.s0 + 4 && t < P.s1 - 4 && tq > Q.s0 + 4 && tq < Q.s1 - 4) P.slots.push(t); }
+      for (const [x, y] of studs) { const sum = P.f > 0 ? x + y : x - y, t = (P.f > 0 ? x - y : x + y) / q2; if (Math.abs(Math.abs(sum - P.c) - pitch / 2) < 0.01 && t > P.s0 + 1 && t < P.s1 - 1) P.posts.push(t); }
+      for (const t of P.slots) for (const d of [-6, 6]) if (t + d > P.s0 + 3.5 && t + d < P.s1 - 3.5) P.tabs.push(t + d);
+    }
+    // top panel
+    const bo = tw + 1.9, tA = [bx(-W / 2, W / 2, L / 2 - bo, L / 2, 0, tT), bx(-W / 2, W / 2, -L / 2, -L / 2 + bo, 0, tT), bx(W / 2 - bo, W / 2, -L / 2, L / 2, 0, tT), bx(-W / 2, -W / 2 + bo, -L / 2, L / 2, 0, tT)], tC = [];
+    for (const P of panels) { const m = at(P.f, P.c, (P.s0 + P.s1) / 2), ang = P.f > 0 ? -45 : 45;
+      tA.push(cubeAt(P.s1 - P.s0 + 6, tg + 1.9, 0, tT).rotate([0, 0, ang]).translate([m[0], m[1], 0]));
+      for (const t of P.tabs) { const c = at(P.f, P.c, t); tC.push(cubeAt(5 + cl, tg + cl, -1, tT + 1).rotate([0, 0, ang]).translate([c[0], c[1], 0])); } }
+    const wallTabs = (len) => { const o = []; for (let u = -len / 2 + 20; u < len / 2 - 6; u += 40) o.push(u); return o; };
+    const lt = wallTabs(L), st = wallTabs(W - 2 * tw);
+    for (const sg of [-1, 1]) { for (const u of lt) tC.push(bx(sg * (W / 2 - tw - cl), sg * (W / 2 + 1), u - 4 - cl / 2, u + 4 + cl / 2, -1, tT + 1));
+      for (const u of st) tC.push(bx(u - 4 - cl / 2, u + 4 + cl / 2, sg * (L / 2 - tw - cl), sg * (L / 2 + 1), -1, tT + 1)); }
+    let top = uni(tA); { const clip = cubeAt(W, L, 0, tT), t2 = top.intersect(clip); kill(top, clip); top = t2; }
+    const rings = [], holes = [];
+    for (const [x, y] of studs) { rings.push(cylAt(R + 1.5, 0, tT, x, y), cylAt(R, 0, tT + p.studHMM, x, y)); holes.push(cylAt(R - 0.84, -1, tT + p.studHMM + 1, x, y)); }
+    { const a1 = top.add(uni(rings)), c1 = uni(tC.concat(holes)), t2 = a1.subtract(c1); kill(a1, c1, top); top = t2; }
+    // strips, built with u along y and v across x (v = 0 is the lower edge once standing)
+    const strips = [];
+    for (const P of panels) { const A = [], C = [], len = P.s1 - P.s0, um = (P.s0 + P.s1) / 2, U = (t) => t - um;
+      A.push(bx(0, bar, -len / 2, len / 2, 0, bar), bx(hp - bar, hp, -len / 2, len / 2, 0, bar), bx(0, hp, -len / 2, -len / 2 + post, 0, tg), bx(0, hp, len / 2 - post, len / 2, 0, tg));
+      for (const t of P.posts) A.push(bx(0, hp, U(t) - post / 2, U(t) + post / 2, 0, tg));
+      for (const t of P.slots) { for (const d of [-1, 1]) A.push(bx(0, hp, U(t) + d * (tg + cl) / 2, U(t) + d * ((tg + cl) / 2 + bar), 0, tg)); A.push(P.f > 0 ? bx(0, hp / 2, U(t) - tg / 2 - 1, U(t) + tg / 2 + 1, 0, tg) : bx(hp / 2, hp, U(t) - tg / 2 - 1, U(t) + tg / 2 + 1, 0, tg)); C.push(P.f > 0 ? bx(hp / 2, hp + 1, U(t) - (tg + cl) / 2, U(t) + (tg + cl) / 2, -1, tg + 1) : bx(-1, hp / 2, U(t) - (tg + cl) / 2, U(t) + (tg + cl) / 2, -1, tg + 1)); }
+      for (const t of P.tabs) A.push(bx(hp - 0.1, hp + tT, U(t) - 2.5, U(t) + 2.5, 0, tg));
+      const b = uni(A), c = uni(C), m = b.subtract(c); kill(b, c); strips.push({ m, len }); }
+    let hexCells = 0;
+    for (const [len, tabs, n] of [[L, lt, 2], [W - 2 * tw, st, 2]]) for (let k = 0; k < n; k++) { const A = [bx(0, hp, -len / 2, len / 2, 0, tw)], C = [];
+      for (let j = -2; j <= 2; j++) for (let u = -len / 2 - du; u < len / 2 + du; u += du) { C.push(Manifold.cylinder(tw + 2, Rh, Rh, 6, false).rotate([0, 0, 30]).translate([hp / 2 + j * dv, u + (j & 1 ? du / 2 : 0), -1])); }
+      const inner = bx(bar, hp - bar, -len / 2 + bar, len / 2 - bar, -2, tw + 2), c0 = uni(C), c = c0.intersect(inner); kill(c0, inner); hexCells += c.decompose().length;
+      for (const u of tabs) A.push(bx(hp - 0.1, hp + tT, u - 4, u + 4, 0, tw));
+      const b = uni(A), m = b.subtract(c); kill(b, c); strips.push({ m, len }); }
+    // lay the strips out in columns beside the top panel
+    strips.sort((x, y) => y.len - x.len); const cols = [], maxLen = Math.max(L, 230), out = [top];
+    for (const S of strips) { let col = cols.find((c) => c.used + S.len + 2 <= maxLen); if (!col) { col = { used: 0, i: cols.length }; cols.push(col); }
+      out.push(S.m.translate([W / 2 + 3 + col.i * (hp + tT + 1.5), -maxLen / 2 + col.used + S.len / 2, 0])); kill(S.m); col.used += S.len + 2; }
+    const raw = uni(out), bb = raw.boundingBox(), placed = raw.translate([-(bb.min[0] + bb.max[0]) / 2, -(bb.min[1] + bb.max[1]) / 2, -bb.min[2]]); kill(raw);
+    const b2 = placed.boundingBox(), size = [b2.max[0] - b2.min[0], b2.max[1] - b2.min[1], b2.max[2] - b2.min[2]], status = placed.status();
+    // hand estimates. Grid posts: columns pinned at both ends. Walls: plastic collapse of a regular hexagon lattice (Gibson and Ashby), (2/3)(t/l)² × strength.
+    const mat = MATERIALS[p.material] || MATERIALS.anycubic_petg_cons, nPost = panels.reduce((n, P) => n + P.posts.length + 2 * P.slots.length, 0), Lp = hp - 2 * bar;
+    const perPost = Math.min(Math.PI ** 2 * mat.modulus * tg * post ** 3 / 12 / Lp ** 2, mat.tensileXY * tg * post), gridN = nPost * perPost;
+    const wallN = (2 / 3) * (bar / (du / Math.sqrt(3))) ** 2 * mat.tensileXY * tw * 2 * (L + W - 2 * tw), holdN = gridN + wallN;
+    const warnings = [`Hand estimate, not a test: holds about ${Math.round(holdN / 9.81)} kg standing (${Math.round(holdN)} N: grid ${Math.round(gridN)} N from ${nPost} posts at ${Math.round(perPost)} N each, hexagon walls ${Math.round(wallN)} N; load spread evenly). Flat-pack plate, shown as it prints: ${1 + strips.length} parts that slot together by hand. The fit of the slots and tabs is untested.`];
+    if (status !== 'NoError') warnings.push('Geometry error: ' + status);
+    if (size[0] > PRINTER.x || size[1] > PRINTER.y || size[2] > PRINTER.z) warnings.push(`Exceeds ${PRINTER.name} build volume (${PRINTER.x}×${PRINTER.y}×${PRINTER.z} mm).`);
+    const stats = { ...r0.stats, volume: placed.volume(), surfaceArea: placed.surfaceArea(), numTri: placed.numTri(), status, size, overhangArea: 0, bridgeArea: 0, holeTopArea: 0, fragmentsRemoved: 0, fragmentVolume: 0, openTop: null,
+      pack: { parts: 1 + strips.length, panels: panels.map((P) => ({ f: P.f, c: P.c, len: P.s1 - P.s0, slots: P.slots.length, posts: P.posts.length, tabs: P.tabs.length })), gridT: tg, wallT: tw, hexCells, holdN, gridN, wallN, nPost, perPost } };
+    return { manifold: placed, stats, warnings, p };
+  }
 
   // Fold-flat plate: one flat sheet (top face, stud rings, four wall flaps on fold lines, corner straps and slotted tabs)
   // and the inner strips, laid out as they print. Folded by hand after printing.
@@ -4139,7 +4209,7 @@ const DEF = {
   optTargetKg: 200, optMassCap: 15, optTimeWeight: 1.0, optEvals: 60, optShell: true, optWalls: true, optTubes: true, optInfill: true, optCore: true, optSecondary: false, optLayer: true, optHex: true, optTri: true, optSq: true, optBuild: 'both', optKeepWalls: false,
 };
 // The block the page opens on: sandwich walls of hexagons on zigzag plates with round openings, arches in the top corners.
-Object.assign(DEF, { fold: false, look: 'sandHexZig', openTop: true, gen: 'cut', wallBuild: 'sandwich', sandStyle: 'pointhex', sandCore: 'zigzag', sandCoreHoles: 'circles', sandHoleAuto: true, sandCell: 14, sandStrut: 0.84, sandArch: true, deckBuild: 'sandwich',
+Object.assign(DEF, { pack: false, fold: false, look: 'sandHexZig', openTop: true, gen: 'cut', wallBuild: 'sandwich', sandStyle: 'pointhex', sandCore: 'zigzag', sandCoreHoles: 'circles', sandHoleAuto: true, sandCell: 14, sandStrut: 0.84, sandArch: true, deckBuild: 'sandwich',
   windowStyle: 'hexLattice', wallCell: 14, strut: 0.84, windowShort: true, core: 'ribs', ribT: 0.84, ribDir: 'x', deckPattern: true, deckCell: 5, tubes: true, tubePattern: 'honeycomb', tubeCell: 12, tubeStrut: 0.84,
   studPattern: true, studHoleFrac: 0.9, lattice2: false, lattice3: 'none', infill: 0, layerH: 0.28, wallAuto: true, deckAuto: true, tubeWallAuto: true, noSupports: true, preset: 'custom' });
 const PRESETS = {
@@ -4155,7 +4225,7 @@ try { const saved = JSON.parse(localStorage.getItem('jumpblocks.v11') || 'null')
 const persist = () => { try { localStorage.setItem('jumpblocks.v11', JSON.stringify(S)); } catch (e) {} };
 
 const LEGO = { pitch: 8, plate: 3.2, wall: 1.2, deck: 1.0, tubeWall: (6.51 - 4.8) / 2 };
-const GEOM_KEYS = ['fold','openTop','gen','archLean','archCell','archStrut','archCurve','archGrid','archShells','archRows','archCore','archPlates','growStyle','growCell','growStrut','growTruss','type','studs','scale','nx','ny','heightPlates','risePlates','orientation','noSupports','bridgeMax','clearance','studClear','clutch','studD','studH','studHollow','studHoleFrac','wall','deck','tubes','tubeWall','core','ribT','ribDir','deckCell','cell','latticeT','windowStyle','windowW','windowH','wallCell','strut','windowShort','wallBuild','sandStyle','sandCore','sandCoreHoles','sandCoreHoleD','sandCell','sandStrut','sandArch','deckBuild','drainHoles','drainD','tubePattern','tubeCell','tubeStrut','deckPattern','studPattern','lattice2','lattice2Style','cell2','strut2','lattice3','cell3','strut3','lattice3Style','layerH','infill'];
+const GEOM_KEYS = ['pack','fold','openTop','gen','archLean','archCell','archStrut','archCurve','archGrid','archShells','archRows','archCore','archPlates','growStyle','growCell','growStrut','growTruss','type','studs','scale','nx','ny','heightPlates','risePlates','orientation','noSupports','bridgeMax','clearance','studClear','clutch','studD','studH','studHollow','studHoleFrac','wall','deck','tubes','tubeWall','core','ribT','ribDir','deckCell','cell','latticeT','windowStyle','windowW','windowH','wallCell','strut','windowShort','wallBuild','sandStyle','sandCore','sandCoreHoles','sandCoreHoleD','sandCell','sandStrut','sandArch','deckBuild','drainHoles','drainD','tubePattern','tubeCell','tubeStrut','deckPattern','studPattern','lattice2','lattice2Style','cell2','strut2','lattice3','cell3','strut3','lattice3Style','layerH','infill'];
 let pinned = null;   // exact parameter set from the optimizer, used verbatim until the user edits geometry
 function coreParams(s) {
   const base = coreParamsRaw(s);
@@ -4165,7 +4235,7 @@ function coreParams(s) {
 }
 function coreParamsRaw(s) {
   return {
-    fold: !!s.fold, foldT: s.foldT, foldOpen: s.foldOpen, foldRing: s.foldRing, foldStudH: s.foldStudH, foldBar: s.foldBar, foldRibH: s.foldRibH, foldRibs: s.foldRibs, openTop: !!s.openTop, gen: s.gen === 'arch' ? 'arch' : 'cut', archLean: s.archLean, archCell: s.archCell, archStrut: s.archStrut, archCurve: s.archCurve, archGrid: s.archGrid, archShells: s.archShells, archRows: s.archRows === 'posts' ? 'posts' : 'stagger', archCore: s.archCore === 'web' ? 'web' : 'ties', archPlates: s.archPlates === 0 ? 0 : 1,
+    pack: !!s.pack, packWall: s.packWall, fold: !!s.fold, foldT: s.foldT, foldOpen: s.foldOpen, foldRing: s.foldRing, foldStudH: s.foldStudH, foldBar: s.foldBar, foldRibH: s.foldRibH, foldRibs: s.foldRibs, openTop: !!s.openTop, gen: s.gen === 'arch' ? 'arch' : 'cut', archLean: s.archLean, archCell: s.archCell, archStrut: s.archStrut, archCurve: s.archCurve, archGrid: s.archGrid, archShells: s.archShells, archRows: s.archRows === 'posts' ? 'posts' : 'stagger', archCore: s.archCore === 'web' ? 'web' : 'ties', archPlates: s.archPlates === 0 ? 0 : 1,
     type: s.type === 'wedge' ? 'wedge' : 'brick', studs: s.type !== 'flat',
     scale: s.scale, nx: s.nx, ny: s.ny, heightPlates: s.heightPlates, risePlates: s.risePlates, orientation: s.orientation, noSupports: s.noSupports, bridgeMax: s.bridgeMax,
     clearance: s.clearance, studClear: s.studClear, clutch: s.clutch, studD: s.studD, studH: s.studH, studHollow: s.studHollow, studHoleFrac: s.studHoleFrac,
@@ -4324,6 +4394,7 @@ const LOOKS = {
   sandHex: sandLook('honeycomb'), sandTri: sandLook('triangles'), sandSq: sandLook('squares'),
   fastPlate: { gen: 'cut', openTop: true, heightPlates: 1, wallBuild: 'solid', windowStyle: 'none', wallAuto: false, wall: 0.84, sandArch: false, core: 'ribs', ribT: 0.84, ribDir: 'x', tubes: true, tubePattern: 'none', tubeStrut: 0.84, studPattern: false, deckPattern: false, lattice2: false, lattice3: 'none', infill: 0, layerH: 0.28, tubeWallAuto: true, deckAuto: true },
   foldFlat: { gen: 'cut', openTop: true, heightPlates: 1, wallBuild: 'solid', windowStyle: 'none', wallAuto: false, wall: 0.84, sandArch: false, core: 'ribs', ribT: 0.84, ribDir: 'x', tubes: true, tubePattern: 'none', tubeStrut: 0.84, studPattern: false, deckPattern: false, lattice2: false, lattice3: 'none', infill: 0, layerH: 0.28, tubeWallAuto: true, deckAuto: true, fold: true },
+  flatPack: { gen: 'cut', openTop: true, heightPlates: 1, wallBuild: 'solid', windowStyle: 'none', wallAuto: false, wall: 0.84, sandArch: false, core: 'ribs', ribT: 0.84, ribDir: 'x', tubes: true, tubePattern: 'none', tubeStrut: 0.84, studPattern: false, deckPattern: false, lattice2: false, lattice3: 'none', infill: 0, layerH: 0.28, tubeWallAuto: true, deckAuto: true, pack: true },
   sandHexZig: { ...sandLook('pointhex'), sandCell: 14, wallCell: 14, sandCore: 'zigzag', sandCoreHoles: 'circles', sandHoleAuto: true, sandStrut: 0.84, strut: 0.84, tubeStrut: 0.84, ribT: 0.84, layerH: 0.28 },
   cutHex: { ...sandLook('honeycomb'), wallBuild: 'solid', sandArch: false, deckBuild: 'solid' },
   arch: { gen: 'arch', archLean: 30, archCell: 7, archStrut: 0.9, archCurve: 0.5, archGrid: 0, archShells: 2, archRows: 'stagger', archCore: 'ties', archPlates: 1, tubes: true, wallAuto: true, tubeWallAuto: true, infill: 0, layerH: 0.24, noSupports: true, preset: 'custom' },
@@ -4340,6 +4411,7 @@ const LOOK_NOTES = {
   sandSq: 'All four walls: two square skins on one grid, tied together; pointed arches in the top corners of each wall. The deck: a square skin on top, tied to a lower skin of straight slats that run from support to support. Change cell size and strut under Side walls.',
   fastPlate: 'A plate made to print fast: one plate high, a plain two-line outer wall, no deck. Almost every layer is a few long loops, so the nozzle rarely stops. Tubes and ribs are two-line shells. Each stud is a shell on eight supports that lean 45°. Thin fins inside the wall grip the studs of the piece below. No level span.',
   foldFlat: 'A plate that prints as one flat sheet and folds into shape by hand, with no glue. The top face and the stud rings print in place. The four walls are flaps that fold down. A toothed strap at each corner folds around the inside and locks in a slotted tab. Four inner strips fold into a square pocket around each stud of the plate below and snap into slots in the top face. Untested: the folds, the straps and the grip.',
+  flatPack: 'A plate made of parts that all print lying flat and slot together by hand, with no glue. A top panel carries the stud rings. Four walls are hexagon lattices 3 mm thick. A diagonal grid of panels crosses in half slots; each stud of the plate below sits in a square cell of the grid, and upright posts in the grid carry the load. Untested: the fit of the slots and tabs.',
   sandHexZig: 'All four walls: two skins of hexagons that stand on a point (edges 45° off upright, no level edge), on one grid. Upright plates run from skin to skin in a zigzag, so each wall is a row of triangles seen from above. One round opening goes through the plates behind each hexagon. The deck is the same as in the hexagon sandwich look. Set the plates and their openings under Side walls. The Optimize tab finds the opening diameter.',
   cutHex: 'Walls stay one slab; hexagon cells are cut through it.',
   arch: 'Made to print with supports off. Every part is a thin upright plate or round shell. Every opening and every lower edge closes in a pointed arch, so nothing leans more than the limit and nothing spans a gap: no bridges, no level undersides, no deck slab. Brick and flat top only; a wedge falls back to the slab generator.',
@@ -4356,7 +4428,7 @@ const isArch = (s) => s.gen === 'arch' && s.type !== 'wedge' && s.nx > 1 && s.ny
 const CONTROLS = {
   block: [
     { t: 'seg', k: 'type', opts: [['brick', 'Brick'], ['flat', 'Flat top'], ['wedge', 'Wedge']] },
-    { t: 'select', k: 'look', label: 'Look', opts: [['custom', 'custom (as set below)'], ['lego', 'LEGO shell'], ['sandHex', 'Sandwich walls · hexagons'], ['sandTri', 'Sandwich walls · triangles'], ['sandSq', 'Sandwich walls · squares'], ['sandHexZig', 'Sandwich walls · hexagons on zigzag plates'], ['fastPlate', 'Fast plate · thin walls, one plate high'], ['foldFlat', 'Fold-flat plate · prints as a sheet, folds by hand'], ['cutHex', 'Slab walls · hexagons cut through'], ['arch', 'Arch lattice · no supports'], ['archWebHex', 'Arch lattice · honeycomb walls on a zigzag web · no supports'], ['archWebPosts', 'Arch lattice · posts and triangles on a zigzag web · no supports']], note: s => LOOK_NOTES[s.look] || '' },
+    { t: 'select', k: 'look', label: 'Look', opts: [['custom', 'custom (as set below)'], ['lego', 'LEGO shell'], ['sandHex', 'Sandwich walls · hexagons'], ['sandTri', 'Sandwich walls · triangles'], ['sandSq', 'Sandwich walls · squares'], ['sandHexZig', 'Sandwich walls · hexagons on zigzag plates'], ['fastPlate', 'Fast plate · thin walls, one plate high'], ['foldFlat', 'Fold-flat plate · prints as a sheet, folds by hand'], ['flatPack', 'Flat-pack plate · hexagon walls, parts slot together'], ['cutHex', 'Slab walls · hexagons cut through'], ['arch', 'Arch lattice · no supports'], ['archWebHex', 'Arch lattice · honeycomb walls on a zigzag web · no supports'], ['archWebPosts', 'Arch lattice · posts and triangles on a zigzag web · no supports']], note: s => LOOK_NOTES[s.look] || '' },
     { t: 'check', k: 'openTop', label: 'Open top (no deck, lighter)', show: s => !isArch(s) && s.type === 'brick' && s.nx > 1 && s.ny > 1, note: s => s.openTop ? (s.core !== 'ribs' ? 'Needs ribs as the core. This block is built with the deck.' : 'No deck and no band over the walls: the walls run to the top and stand on the lower edges of their skins and plates. The corner posts are hollow square tubes with openings through all four faces. The tubes are two-line shells as tall as the block, with four tall pointed windows each. The ribs are plates from wall to tube with pointed doors and windows. Each stud is a two-line shell on eight supports (wall, tube, or a short plate to a wall or rib), closing between them in pointed arches. No free edge inside leans more than 28°. Ribs run both ways.') : 'Off: a deck under the studs and tubes as tall as the block.' },
     { t: 'group', label: 'Arch lattice', show: s => isArch(s) },
     { t: 'select', k: 'archRows', label: 'Wall openings', opts: [['stagger', 'honeycomb: each row shifted half a cell'], ['posts', 'straight columns: posts, hexagons and triangles']], note: (s) => s.archRows === 'posts' ? 'A post stands on every pier line from the bed to the top. Each column is a window, then hexagons. The head of one opening and the foot of the next make an X between the posts; the space beside the X is an open triangle. Straight-sided arches (arch shape 0) fit the most rows. Tubes and inside plates keep the honeycomb.' + (s.archCore === 'web' ? ' The zigzag web holds each post over the height of the triangles.' : ' With arch ties nothing holds a post over the height of the triangles, and the capacity check shows it; use the zigzag web.') : 'The head of each opening carries the pier between the two openings above it. No upright line is solid from the bed to the top.' },
@@ -4598,7 +4670,7 @@ function setParam(k, v, live) {
     // commit any half-typed number first (a focused field that the look hides would otherwise fire its change afterwards and undo the look)
     const ae = document.activeElement; if (ae && ae.tagName === 'INPUT' && ae.blur) ae.blur();
     S.look = v; pinned = null;
-    if (LOOKS[v]) { S.fold = false; Object.assign(S, LOOKS[v]); }
+    if (LOOKS[v]) { S.fold = false; S.pack = false; Object.assign(S, LOOKS[v]); }
   }
   else {
     S[k] = v;
