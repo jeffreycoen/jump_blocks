@@ -1501,7 +1501,7 @@ function createCore(wasm) {
   function buildFold(params) {
     const r0 = buildBlock({ ...params, fold: false }); kill(r0.manifold);
     const p = r0.p, { W, L, H, pitch } = p, T = params.foldT || 0.56, web = 0.28, open = params.foldOpen !== false, ringW = params.foldRing || 0.84, sH = params.foldStudH || p.studHMM, bw = params.foldBar || 0.84, g = 0.6, R = p.studDMM / 2, D = R * Math.SQRT2, hf = H - T;
-    const add = [], cut = [], add2 = [];
+    const add = [], cut = [], add2 = []; let nRib = 0; const ribH = params.foldRibH || 1.68;
     const bx = (xa, xb, ya, yb, z0 = 0, z1 = T) => cubeAt(Math.abs(xb - xa), Math.abs(yb - ya), z0, z1, (xa + xb) / 2, (ya + yb) / 2);
     const uni = (xs) => xs.reduce((a, b) => { const c = a.add(b); kill(a, b); return c; });
     const xs = [], ys = [];
@@ -1546,8 +1546,10 @@ function createCore(wasm) {
           const b = j * (4 * R + link), f = [b + 2 * R]; tabs.push(b + 2 * R - 3, b + 2 * R + 3);
           if (j < p.ny - 1) { f.push(b + 4 * R, b + 4 * R + link); tabs.push(b + 4 * R + link / 2); }
           for (const q of f) cut.push(bx(xc - sW / 2 - 1, xc + sW / 2 + 1, y0 + q - 0.3, y0 + q + 0.3, web, T + 1));
-          if (open) for (const q0 of [b, b + 2 * R]) { const m = q0 + R;   // two windows per face; the bar between them touches the stud
-            cut.push(bx(xc - sW / 2 + bw, xc + sW / 2 - bw, y0 + q0 + bw, y0 + m - bw / 2, -1, T + 1), bx(xc - sW / 2 + bw, xc + sW / 2 - bw, y0 + m + bw / 2, y0 + q0 + 2 * R - bw, -1, T + 1)); }
+          // each face: three upright ribs on the back (they carry the load), a 3 mm band of sheet under each, windows between
+          if (open) for (const q0 of [b, b + 2 * R]) { const at = params.foldRibs === 2 ? [q0 + R / 2, q0 + 3 * R / 2] : [q0 + R / 3, q0 + R, q0 + 5 * R / 3];
+            for (const q of at) { add2.push(bx(xc - sW / 2, xc + sW / 2, y0 + q - 0.42, y0 + q + 0.42, T - 0.05, T + ribH)); nRib++; }
+            for (let i = 0; i + 1 < at.length; i++) cut.push(bx(xc - sW / 2 + 1.68, xc + sW / 2 - 1.68, y0 + at[i] + 1.5, y0 + at[i + 1] - 1.5, -1, T + 1)); }
         }
         for (const q of tabs) add.push(bx(xc + s * sW / 2, xc + s * (sW / 2 + 1.1), y0 + q - 1.8, y0 + q + 1.8));
       }
@@ -1559,11 +1561,16 @@ function createCore(wasm) {
     const e2 = uni(add2), raw = d.add(e2); kill(d, e2);
     const bb = raw.boundingBox(), placed = raw.translate([-(bb.min[0] + bb.max[0]) / 2, -(bb.min[1] + bb.max[1]) / 2, -bb.min[2]]); kill(raw);
     const b2 = placed.boundingBox(), size = [b2.max[0] - b2.min[0], b2.max[1] - b2.min[1], b2.max[2] - b2.min[2]], status = placed.status();
-    const warnings = ['Fold-flat sheet, shown as it prints. It is folded by hand afterwards. The capacity figure does not apply to it. The folds, the corner straps and the grip on the studs are untested.'];
+    // hand estimate of the standing load: each rib with its band of sheet is a column, pinned at both ends, that bows sideways
+    const Em = (MATERIALS[p.material] || MATERIALS.anycubic_petg_cons).modulus, Sm = (MATERIALS[p.material] || MATERIALS.anycubic_petg_cons).tensileXY;
+    const a1 = 3 * T, a2 = 0.84 * ribH, cy = (a1 * T / 2 + a2 * (T + ribH / 2)) / (a1 + a2);
+    const Iout = 3 * T ** 3 / 12 + a1 * (cy - T / 2) ** 2 + 0.84 * ribH ** 3 / 12 + a2 * (T + ribH / 2 - cy) ** 2, Iin = T * 27 / 12 + ribH * 0.84 ** 3 / 12;
+    const perRib = Math.min(Math.PI ** 2 * Em * Math.min(Iout, Iin) / sW ** 2, Sm * (a1 + a2)), holdN = open ? nRib * perRib : 0;
+    const warnings = [(holdN ? `Hand estimate, not a test: holds about ${Math.round(holdN / 9.81)} kg standing (${Math.round(holdN)} N; ${nRib} ribs in the inner strips at ${Math.round(perRib)} N each, load spread evenly, walls not counted). ` : '') + 'Fold-flat sheet, shown as it prints. It is folded by hand afterwards. The capacity figure does not apply to it. The folds, the corner straps and the grip on the studs are untested.'];
     if (status !== 'NoError') warnings.push('Geometry error: ' + status);
     if (size[0] > PRINTER.x || size[1] > PRINTER.y || size[2] > PRINTER.z) warnings.push(`Exceeds ${PRINTER.name} build volume (${PRINTER.x}×${PRINTER.y}×${PRINTER.z} mm).`);
     const stats = { ...r0.stats, volume: placed.volume(), surfaceArea: placed.surfaceArea(), numTri: placed.numTri(), status, size, overhangArea: 0, bridgeArea: 0, holeTopArea: 0, fragmentsRemoved: 0, fragmentVolume: 0, openTop: null,
-      fold: { sheet: [W + 2 * (g + hf), L + 2 * (g + hf)], strips: 2 * p.nx, stripLen: sLen, straps: 4, pieces: 1 + 2 * p.nx, thick: T } };
+      fold: { holdN, ribs: nRib, perRib, sheet: [W + 2 * (g + hf), L + 2 * (g + hf)], strips: 2 * p.nx, stripLen: sLen, straps: 4, pieces: 1 + 2 * p.nx, thick: T } };
     return { manifold: placed, stats, warnings, p };
   }
 
@@ -4158,7 +4165,7 @@ function coreParams(s) {
 }
 function coreParamsRaw(s) {
   return {
-    fold: !!s.fold, foldT: s.foldT, foldOpen: s.foldOpen, foldRing: s.foldRing, foldStudH: s.foldStudH, foldBar: s.foldBar, openTop: !!s.openTop, gen: s.gen === 'arch' ? 'arch' : 'cut', archLean: s.archLean, archCell: s.archCell, archStrut: s.archStrut, archCurve: s.archCurve, archGrid: s.archGrid, archShells: s.archShells, archRows: s.archRows === 'posts' ? 'posts' : 'stagger', archCore: s.archCore === 'web' ? 'web' : 'ties', archPlates: s.archPlates === 0 ? 0 : 1,
+    fold: !!s.fold, foldT: s.foldT, foldOpen: s.foldOpen, foldRing: s.foldRing, foldStudH: s.foldStudH, foldBar: s.foldBar, foldRibH: s.foldRibH, foldRibs: s.foldRibs, openTop: !!s.openTop, gen: s.gen === 'arch' ? 'arch' : 'cut', archLean: s.archLean, archCell: s.archCell, archStrut: s.archStrut, archCurve: s.archCurve, archGrid: s.archGrid, archShells: s.archShells, archRows: s.archRows === 'posts' ? 'posts' : 'stagger', archCore: s.archCore === 'web' ? 'web' : 'ties', archPlates: s.archPlates === 0 ? 0 : 1,
     type: s.type === 'wedge' ? 'wedge' : 'brick', studs: s.type !== 'flat',
     scale: s.scale, nx: s.nx, ny: s.ny, heightPlates: s.heightPlates, risePlates: s.risePlates, orientation: s.orientation, noSupports: s.noSupports, bridgeMax: s.bridgeMax,
     clearance: s.clearance, studClear: s.studClear, clutch: s.clutch, studD: s.studD, studH: s.studH, studHollow: s.studHollow, studHoleFrac: s.studHoleFrac,
