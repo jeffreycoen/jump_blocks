@@ -831,6 +831,7 @@ function createCore(wasm) {
   }
 
   function buildBlock(params) {
+    if (params.wave) return buildWave(params);
     if (params.pack) return buildPack(params);
     if (params.fold) return buildFold(params);
     if ((params.gen || DEFAULTS.gen) === 'grow') return buildGrown(params);
@@ -1497,6 +1498,31 @@ function createCore(wasm) {
 
 
 
+
+  // Fast block: the fast plate at full block height with a wavy outer wall. The wall is one wide line that runs in a
+  // shallow wave, so it prints as one long loop and resists buckling far better than a flat sheet of the same weight.
+  function buildWave(params) {
+    const tw = params.waveT || 0.56, amp = params.waveAmp || 3, lam = params.waveLen || 20, d0 = 0.05;
+    const r = buildBlock({ ...params, wave: false, wallAuto: false, wall: tw });
+    const p = r.p, { W, L, H } = p, hx = W / 2, hy = L / 2;
+    const box = cubeAt(W - 2 * tw - 0.02, L - 2 * tw - 0.02, -1, H + 40), core = r.manifold.intersect(box); kill(box, r.manifold);
+    const dip = (s) => d0 + amp * (1 - Math.cos(2 * Math.PI * s / lam)) / 2, slope = (s) => amp * Math.PI / lam * Math.sin(2 * Math.PI * s / lam);
+    const loop = (extra) => { const pts = [], off = (s) => dip(s) + (extra ? tw * Math.sqrt(1 + slope(s) ** 2) : 0), c = d0 + (extra ? tw : 0), st = 0.5;
+      pts.push([-hx + c, -hy + c]); for (let x = -hx + 1.5; x <= hx - 1.5; x += st) pts.push([x, -hy + off(x)]);
+      pts.push([hx - c, -hy + c]); for (let y = -hy + 1.5; y <= hy - 1.5; y += st) pts.push([hx - off(y), y]);
+      pts.push([hx - c, hy - c]); for (let x = hx - 1.5; x >= -hx + 1.5; x -= st) pts.push([x, hy - off(x)]);
+      pts.push([-hx + c, hy - c]); for (let y = hy - 1.5; y >= -hy + 1.5; y -= st) pts.push([-hx + off(y), y]);
+      return CrossSection.ofPolygons([pts], 'Positive'); };
+    const o = loop(false), i_ = loop(true), ring = o.subtract(i_), wall = ring.extrude(H, 0, 0, [1, 1], false); kill(o, i_, ring);
+    const placed = core.add(wall); kill(core, wall);
+    const status = placed.status();
+    // Hand estimate: the wavy wall as a wide column the full height, pinned at both ends, load spread evenly.
+    const E = 1850, A = amp / 2, I = tw * A * A / 2, per = 2 * (W + L), wallN = Math.PI ** 2 * E * I / (H * H) * per;
+    const warnings = [`Hand estimate, not a test: the wavy wall alone holds about ${Math.round(wallN / 9.81)} kg standing (${Math.round(wallN)} N) before it buckles; the tubes and ribs are not counted. Fast block: one wide line in a wave ${amp} mm deep, ${lam} mm long.`, ...r.warnings];
+    if (status !== 'NoError') warnings.push('Geometry error: ' + status);
+    const stats = { ...r.stats, volume: placed.volume(), surfaceArea: placed.surfaceArea(), numTri: placed.numTri(), status, wall: tw, wave: { amp, lam, wallN } };
+    return { manifold: placed, stats, warnings, p };
+  }
 
   // Flat-pack plate: every part prints lying flat and the parts slot together by hand. A top panel with the stud rings,
   // four hexagon-lattice walls, and a diagonal grid of panels that cross in half slots. Each stud of the plate below sits
@@ -4209,7 +4235,7 @@ const DEF = {
   optTargetKg: 200, optMassCap: 15, optTimeWeight: 1.0, optEvals: 60, optShell: true, optWalls: true, optTubes: true, optInfill: true, optCore: true, optSecondary: false, optLayer: true, optHex: true, optTri: true, optSq: true, optBuild: 'both', optKeepWalls: false,
 };
 // The block the page opens on: sandwich walls of hexagons on zigzag plates with round openings, arches in the top corners.
-Object.assign(DEF, { pack: false, fold: false, look: 'sandHexZig', openTop: true, gen: 'cut', wallBuild: 'sandwich', sandStyle: 'pointhex', sandCore: 'zigzag', sandCoreHoles: 'circles', sandHoleAuto: true, sandCell: 14, sandStrut: 0.84, sandArch: true, deckBuild: 'sandwich',
+Object.assign(DEF, { wave: false, pack: false, fold: false, look: 'sandHexZig', openTop: true, gen: 'cut', wallBuild: 'sandwich', sandStyle: 'pointhex', sandCore: 'zigzag', sandCoreHoles: 'circles', sandHoleAuto: true, sandCell: 14, sandStrut: 0.84, sandArch: true, deckBuild: 'sandwich',
   windowStyle: 'hexLattice', wallCell: 14, strut: 0.84, windowShort: true, core: 'ribs', ribT: 0.84, ribDir: 'x', deckPattern: true, deckCell: 5, tubes: true, tubePattern: 'honeycomb', tubeCell: 12, tubeStrut: 0.84,
   studPattern: true, studHoleFrac: 0.9, lattice2: false, lattice3: 'none', infill: 0, layerH: 0.28, wallAuto: true, deckAuto: true, tubeWallAuto: true, noSupports: true, preset: 'custom' });
 const PRESETS = {
@@ -4225,7 +4251,7 @@ try { const saved = JSON.parse(localStorage.getItem('jumpblocks.v11') || 'null')
 const persist = () => { try { localStorage.setItem('jumpblocks.v11', JSON.stringify(S)); } catch (e) {} };
 
 const LEGO = { pitch: 8, plate: 3.2, wall: 1.2, deck: 1.0, tubeWall: (6.51 - 4.8) / 2 };
-const GEOM_KEYS = ['pack','fold','openTop','gen','archLean','archCell','archStrut','archCurve','archGrid','archShells','archRows','archCore','archPlates','growStyle','growCell','growStrut','growTruss','type','studs','scale','nx','ny','heightPlates','risePlates','orientation','noSupports','bridgeMax','clearance','studClear','clutch','studD','studH','studHollow','studHoleFrac','wall','deck','tubes','tubeWall','core','ribT','ribDir','deckCell','cell','latticeT','windowStyle','windowW','windowH','wallCell','strut','windowShort','wallBuild','sandStyle','sandCore','sandCoreHoles','sandCoreHoleD','sandCell','sandStrut','sandArch','deckBuild','drainHoles','drainD','tubePattern','tubeCell','tubeStrut','deckPattern','studPattern','lattice2','lattice2Style','cell2','strut2','lattice3','cell3','strut3','lattice3Style','layerH','infill'];
+const GEOM_KEYS = ['wave','waveAmp','waveLen','waveT','pack','fold','openTop','gen','archLean','archCell','archStrut','archCurve','archGrid','archShells','archRows','archCore','archPlates','growStyle','growCell','growStrut','growTruss','type','studs','scale','nx','ny','heightPlates','risePlates','orientation','noSupports','bridgeMax','clearance','studClear','clutch','studD','studH','studHollow','studHoleFrac','wall','deck','tubes','tubeWall','core','ribT','ribDir','deckCell','cell','latticeT','windowStyle','windowW','windowH','wallCell','strut','windowShort','wallBuild','sandStyle','sandCore','sandCoreHoles','sandCoreHoleD','sandCell','sandStrut','sandArch','deckBuild','drainHoles','drainD','tubePattern','tubeCell','tubeStrut','deckPattern','studPattern','lattice2','lattice2Style','cell2','strut2','lattice3','cell3','strut3','lattice3Style','layerH','infill'];
 let pinned = null;   // exact parameter set from the optimizer, used verbatim until the user edits geometry
 function coreParams(s) {
   const base = coreParamsRaw(s);
@@ -4235,7 +4261,7 @@ function coreParams(s) {
 }
 function coreParamsRaw(s) {
   return {
-    pack: !!s.pack, packWall: s.packWall, fold: !!s.fold, foldT: s.foldT, foldOpen: s.foldOpen, foldRing: s.foldRing, foldStudH: s.foldStudH, foldBar: s.foldBar, foldRibH: s.foldRibH, foldRibs: s.foldRibs, openTop: !!s.openTop, gen: s.gen === 'arch' ? 'arch' : 'cut', archLean: s.archLean, archCell: s.archCell, archStrut: s.archStrut, archCurve: s.archCurve, archGrid: s.archGrid, archShells: s.archShells, archRows: s.archRows === 'posts' ? 'posts' : 'stagger', archCore: s.archCore === 'web' ? 'web' : 'ties', archPlates: s.archPlates === 0 ? 0 : 1,
+    wave: !!s.wave, waveAmp: s.waveAmp, waveLen: s.waveLen, waveT: s.waveT, pack: !!s.pack, packWall: s.packWall, fold: !!s.fold, foldT: s.foldT, foldOpen: s.foldOpen, foldRing: s.foldRing, foldStudH: s.foldStudH, foldBar: s.foldBar, foldRibH: s.foldRibH, foldRibs: s.foldRibs, openTop: !!s.openTop, gen: s.gen === 'arch' ? 'arch' : 'cut', archLean: s.archLean, archCell: s.archCell, archStrut: s.archStrut, archCurve: s.archCurve, archGrid: s.archGrid, archShells: s.archShells, archRows: s.archRows === 'posts' ? 'posts' : 'stagger', archCore: s.archCore === 'web' ? 'web' : 'ties', archPlates: s.archPlates === 0 ? 0 : 1,
     type: s.type === 'wedge' ? 'wedge' : 'brick', studs: s.type !== 'flat',
     scale: s.scale, nx: s.nx, ny: s.ny, heightPlates: s.heightPlates, risePlates: s.risePlates, orientation: s.orientation, noSupports: s.noSupports, bridgeMax: s.bridgeMax,
     clearance: s.clearance, studClear: s.studClear, clutch: s.clutch, studD: s.studD, studH: s.studH, studHollow: s.studHollow, studHoleFrac: s.studHoleFrac,
@@ -4394,6 +4420,7 @@ const LOOKS = {
   sandHex: sandLook('honeycomb'), sandTri: sandLook('triangles'), sandSq: sandLook('squares'),
   fastPlate: { gen: 'cut', openTop: true, heightPlates: 1, wallBuild: 'solid', windowStyle: 'none', wallAuto: false, wall: 0.84, sandArch: false, core: 'ribs', ribT: 0.84, ribDir: 'x', tubes: true, tubePattern: 'none', tubeStrut: 0.84, studPattern: false, deckPattern: false, lattice2: false, lattice3: 'none', infill: 0, layerH: 0.28, tubeWallAuto: true, deckAuto: true },
   foldFlat: { gen: 'cut', openTop: true, heightPlates: 1, wallBuild: 'solid', windowStyle: 'none', wallAuto: false, wall: 0.84, sandArch: false, core: 'ribs', ribT: 0.84, ribDir: 'x', tubes: true, tubePattern: 'none', tubeStrut: 0.84, studPattern: false, deckPattern: false, lattice2: false, lattice3: 'none', infill: 0, layerH: 0.28, tubeWallAuto: true, deckAuto: true, fold: true },
+  fastBlock: { gen: 'cut', openTop: true, heightPlates: 3, wallBuild: 'solid', windowStyle: 'none', wallAuto: false, wall: 0.84, sandArch: false, core: 'ribs', ribT: 0.84, ribDir: 'x', tubes: true, tubePattern: 'none', tubeStrut: 0.84, studPattern: false, deckPattern: false, lattice2: false, lattice3: 'none', infill: 0, layerH: 0.28, tubeWallAuto: true, deckAuto: true, wave: true },
   flatPack: { gen: 'cut', openTop: true, heightPlates: 1, wallBuild: 'solid', windowStyle: 'none', wallAuto: false, wall: 0.84, sandArch: false, core: 'ribs', ribT: 0.84, ribDir: 'x', tubes: true, tubePattern: 'none', tubeStrut: 0.84, studPattern: false, deckPattern: false, lattice2: false, lattice3: 'none', infill: 0, layerH: 0.28, tubeWallAuto: true, deckAuto: true, pack: true },
   sandHexZig: { ...sandLook('pointhex'), sandCell: 14, wallCell: 14, sandCore: 'zigzag', sandCoreHoles: 'circles', sandHoleAuto: true, sandStrut: 0.84, strut: 0.84, tubeStrut: 0.84, ribT: 0.84, layerH: 0.28 },
   cutHex: { ...sandLook('honeycomb'), wallBuild: 'solid', sandArch: false, deckBuild: 'solid' },
@@ -4411,6 +4438,7 @@ const LOOK_NOTES = {
   sandSq: 'All four walls: two square skins on one grid, tied together; pointed arches in the top corners of each wall. The deck: a square skin on top, tied to a lower skin of straight slats that run from support to support. Change cell size and strut under Side walls.',
   fastPlate: 'A plate made to print fast: one plate high, a plain two-line outer wall, no deck. Almost every layer is a few long loops, so the nozzle rarely stops. Tubes and ribs are two-line shells. Each stud is a shell on eight supports that lean 45°. Thin fins inside the wall grip the studs of the piece below. No level span.',
   foldFlat: 'A plate that prints as one flat sheet and folds into shape by hand, with no glue. The top face and the stud rings print in place. The four walls are flaps that fold down. A toothed strap at each corner folds around the inside and locks in a slotted tab. Four inner strips fold into a square pocket around each stud of the plate below and snap into slots in the top face. Untested: the folds, the straps and the grip.',
+  fastBlock: 'The fast plate at full block height. The outer wall is one wide line that runs in a shallow wave, so it prints as one long loop and resists buckling better than a flat wall of the same weight. Not printed.',
   flatPack: 'A plate made of parts that all print lying flat and slot together by hand, with no glue. A top panel carries the stud rings. Four walls are hexagon lattices 3 mm thick. A diagonal grid of panels crosses in half slots; each stud of the plate below sits in a square cell of the grid, and upright posts in the grid carry the load. Untested: the fit of the slots and tabs.',
   sandHexZig: 'All four walls: two skins of hexagons that stand on a point (edges 45° off upright, no level edge), on one grid. Upright plates run from skin to skin in a zigzag, so each wall is a row of triangles seen from above. One round opening goes through the plates behind each hexagon. The deck is the same as in the hexagon sandwich look. Set the plates and their openings under Side walls. The Optimize tab finds the opening diameter.',
   cutHex: 'Walls stay one slab; hexagon cells are cut through it.',
@@ -4428,7 +4456,7 @@ const isArch = (s) => s.gen === 'arch' && s.type !== 'wedge' && s.nx > 1 && s.ny
 const CONTROLS = {
   block: [
     { t: 'seg', k: 'type', opts: [['brick', 'Brick'], ['flat', 'Flat top'], ['wedge', 'Wedge']] },
-    { t: 'select', k: 'look', label: 'Look', opts: [['custom', 'custom (as set below)'], ['lego', 'LEGO shell'], ['sandHex', 'Sandwich walls · hexagons'], ['sandTri', 'Sandwich walls · triangles'], ['sandSq', 'Sandwich walls · squares'], ['sandHexZig', 'Sandwich walls · hexagons on zigzag plates'], ['fastPlate', 'Fast plate · thin walls, one plate high'], ['foldFlat', 'Fold-flat plate · prints as a sheet, folds by hand'], ['flatPack', 'Flat-pack plate · hexagon walls, parts slot together'], ['cutHex', 'Slab walls · hexagons cut through'], ['arch', 'Arch lattice · no supports'], ['archWebHex', 'Arch lattice · honeycomb walls on a zigzag web · no supports'], ['archWebPosts', 'Arch lattice · posts and triangles on a zigzag web · no supports']], note: s => LOOK_NOTES[s.look] || '' },
+    { t: 'select', k: 'look', label: 'Look', opts: [['custom', 'custom (as set below)'], ['lego', 'LEGO shell'], ['sandHex', 'Sandwich walls · hexagons'], ['sandTri', 'Sandwich walls · triangles'], ['sandSq', 'Sandwich walls · squares'], ['sandHexZig', 'Sandwich walls · hexagons on zigzag plates'], ['fastPlate', 'Fast plate · thin walls, one plate high'], ['foldFlat', 'Fold-flat plate · prints as a sheet, folds by hand'], ['fastBlock', 'Fast block · full height, wavy wall'], ['flatPack', 'Flat-pack plate · hexagon walls, parts slot together'], ['cutHex', 'Slab walls · hexagons cut through'], ['arch', 'Arch lattice · no supports'], ['archWebHex', 'Arch lattice · honeycomb walls on a zigzag web · no supports'], ['archWebPosts', 'Arch lattice · posts and triangles on a zigzag web · no supports']], note: s => LOOK_NOTES[s.look] || '' },
     { t: 'check', k: 'openTop', label: 'Open top (no deck, lighter)', show: s => !isArch(s) && s.type === 'brick' && s.nx > 1 && s.ny > 1, note: s => s.openTop ? (s.core !== 'ribs' ? 'Needs ribs as the core. This block is built with the deck.' : 'No deck and no band over the walls: the walls run to the top and stand on the lower edges of their skins and plates. The corner posts are hollow square tubes with openings through all four faces. The tubes are two-line shells as tall as the block, with four tall pointed windows each. The ribs are plates from wall to tube with pointed doors and windows. Each stud is a two-line shell on eight supports (wall, tube, or a short plate to a wall or rib), closing between them in pointed arches. No free edge inside leans more than 28°. Ribs run both ways.') : 'Off: a deck under the studs and tubes as tall as the block.' },
     { t: 'group', label: 'Arch lattice', show: s => isArch(s) },
     { t: 'select', k: 'archRows', label: 'Wall openings', opts: [['stagger', 'honeycomb: each row shifted half a cell'], ['posts', 'straight columns: posts, hexagons and triangles']], note: (s) => s.archRows === 'posts' ? 'A post stands on every pier line from the bed to the top. Each column is a window, then hexagons. The head of one opening and the foot of the next make an X between the posts; the space beside the X is an open triangle. Straight-sided arches (arch shape 0) fit the most rows. Tubes and inside plates keep the honeycomb.' + (s.archCore === 'web' ? ' The zigzag web holds each post over the height of the triangles.' : ' With arch ties nothing holds a post over the height of the triangles, and the capacity check shows it; use the zigzag web.') : 'The head of each opening carries the pier between the two openings above it. No upright line is solid from the bed to the top.' },
@@ -4670,7 +4698,7 @@ function setParam(k, v, live) {
     // commit any half-typed number first (a focused field that the look hides would otherwise fire its change afterwards and undo the look)
     const ae = document.activeElement; if (ae && ae.tagName === 'INPUT' && ae.blur) ae.blur();
     S.look = v; pinned = null;
-    if (LOOKS[v]) { S.fold = false; S.pack = false; Object.assign(S, LOOKS[v]); }
+    if (LOOKS[v]) { S.fold = false; S.pack = false; S.wave = false; Object.assign(S, LOOKS[v]); }
   }
   else {
     S[k] = v;
