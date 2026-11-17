@@ -1500,15 +1500,19 @@ function createCore(wasm) {
   // and the inner strips, laid out as they print. Folded by hand after printing.
   function buildFold(params) {
     const r0 = buildBlock({ ...params, fold: false }); kill(r0.manifold);
-    const p = r0.p, { W, L, H, pitch } = p, T = 0.84, web = 0.28, g = 0.6, R = p.studDMM / 2, D = R * Math.SQRT2, hf = H - T;
+    const p = r0.p, { W, L, H, pitch } = p, T = params.foldT || 0.56, web = 0.28, open = params.foldOpen !== false, ringW = params.foldRing || 0.84, sH = params.foldStudH || p.studHMM, bw = params.foldBar || 0.84, g = 0.6, R = p.studDMM / 2, D = R * Math.SQRT2, hf = H - T;
     const add = [], cut = [], add2 = [];
     const bx = (xa, xb, ya, yb, z0 = 0, z1 = T) => cubeAt(Math.abs(xb - xa), Math.abs(yb - ya), z0, z1, (xa + xb) / 2, (ya + yb) / 2);
     const uni = (xs) => xs.reduce((a, b) => { const c = a.add(b); kill(a, b); return c; });
-    add.push(cubeAt(W, L, 0, T));
     const xs = [], ys = [];
     for (let i = 0; i < p.nx; i++) xs.push((i - (p.nx - 1) / 2) * pitch);
     for (let j = 0; j < p.ny; j++) ys.push((j - (p.ny - 1) / 2) * pitch);
-    for (const x of xs) for (const y of ys) { add.push(cylAt(R, 0, T + p.studHMM, x, y)); cut.push(cylAt(R - 0.84, -1, T + p.studHMM + 1, x, y)); }
+    // top face: whole, or (open) a border, a bar under each stud row each way, and a pad under each stud ring
+    if (!open) add.push(cubeAt(W, L, 0, T));
+    else { add.push(bx(-W / 2, W / 2, L / 2 - bw, L / 2), bx(-W / 2, W / 2, -L / 2, -L / 2 + bw), bx(W / 2 - bw, W / 2, -L / 2, L / 2), bx(-W / 2, -W / 2 + bw, -L / 2, L / 2));
+      for (const x of xs) add.push(bx(x - bw / 2, x + bw / 2, -L / 2, L / 2)); for (const y of ys) add.push(bx(-W / 2, W / 2, y - bw / 2, y + bw / 2));
+      for (const x of xs) for (const y of ys) add.push(cylAt(R + 0.6, 0, T, x, y)); }
+    for (const x of xs) for (const y of ys) { add.push(cylAt(R, 0, T + sH, x, y)); cut.push(cylAt(R - ringW, -1, T + sH + 1, x, y)); }
     const link = pitch - 2 * D, sLen = p.ny * 4 * R + (p.ny - 1) * link, sW = hf - 0.9, strapL = Math.min(28, W / 2 - 4.2);
     for (const s of [-1, 1]) {
       // long wall flap (beside the long edge) and its fold line
@@ -1517,6 +1521,12 @@ function createCore(wasm) {
       // short wall flap and its fold line
       const ya = s * (L / 2 + g), yb = s * (L / 2 + g + hf);
       add.push(bx(-W / 2, W / 2, ya, yb), bx(-W / 2, W / 2, s * (L / 2 - 0.3), ya + s * 0.3, T - web, T));
+      if (open) {   // windows in the flaps, clear of the straps and the slotted tabs
+        const len = 2 * (yl - 22), n = Math.max(1, Math.round(len / 20)), st = len / n;
+        for (let i = 0; i < n; i++) cut.push(bx(xa + s * bw, xb - s * bw, -len / 2 + i * st + bw / 2, -len / 2 + (i + 1) * st - bw / 2, -1, T + 1));
+        for (const e of [-1, 1]) cut.push(bx(xa + s * bw, xb - s * bw, e * (yl - bw), e * (yl - 10), -1, T + 1), bx(e * 3, e * (W / 2 - bw - 1), ya + s * bw, yb - s * (10.5 + bw), -1, T + 1));
+        const mid = W / 2 - 1.2 - strapL - 3; if (mid > 3) cut.push(bx(-mid, mid, ya + s * bw, yb - s * bw, -1, T + 1));
+      }
       for (const e of [-1, 1]) {
         // strap with teeth, cut from the short flap; it folds around the inside of the corner
         const yc = yb - s * 6, hx = e * (W / 2 - 1.2);
@@ -1536,13 +1546,15 @@ function createCore(wasm) {
           const b = j * (4 * R + link), f = [b + 2 * R]; tabs.push(b + 2 * R - 3, b + 2 * R + 3);
           if (j < p.ny - 1) { f.push(b + 4 * R, b + 4 * R + link); tabs.push(b + 4 * R + link / 2); }
           for (const q of f) cut.push(bx(xc - sW / 2 - 1, xc + sW / 2 + 1, y0 + q - 0.3, y0 + q + 0.3, web, T + 1));
+          if (open) for (const q0 of [b, b + 2 * R]) { const m = q0 + R;   // two windows per face; the bar between them touches the stud
+            cut.push(bx(xc - sW / 2 + bw, xc + sW / 2 - bw, y0 + q0 + bw, y0 + m - bw / 2, -1, T + 1), bx(xc - sW / 2 + bw, xc + sW / 2 - bw, y0 + m + bw / 2, y0 + q0 + 2 * R - bw, -1, T + 1)); }
         }
         for (const q of tabs) add.push(bx(xc + s * sW / 2, xc + s * (sW / 2 + 1.1), y0 + q - 1.8, y0 + q + 1.8));
       }
     }
     // slots in the top face for the strip tabs
     for (const x of xs) { const at = [ys[0] - D - 0.7, ys[ys.length - 1] + D + 0.7]; for (let j = 0; j + 1 < ys.length; j++) at.push((ys[j] + ys[j + 1]) / 2);
-      for (const y of at) if (Math.abs(y) + 2.4 < L / 2) cut.push(bx(x - 0.55, x + 0.55, y - 1.9, y + 1.9, -1, T + 1)); }
+      for (const y of at) if (Math.abs(y) + 2.4 < L / 2) { if (open) add.push(bx(x - 1.5, x + 1.5, Math.max(-L / 2, y - 2.9), Math.min(L / 2, y + 2.9))); cut.push(bx(x - 0.55, x + 0.55, y - 1.9, y + 1.9, -1, T + 1)); } }
     const a = uni(add), c = uni(cut), d = a.subtract(c); kill(a, c);
     const e2 = uni(add2), raw = d.add(e2); kill(d, e2);
     const bb = raw.boundingBox(), placed = raw.translate([-(bb.min[0] + bb.max[0]) / 2, -(bb.min[1] + bb.max[1]) / 2, -bb.min[2]]); kill(raw);
@@ -4146,7 +4158,7 @@ function coreParams(s) {
 }
 function coreParamsRaw(s) {
   return {
-    fold: !!s.fold, openTop: !!s.openTop, gen: s.gen === 'arch' ? 'arch' : 'cut', archLean: s.archLean, archCell: s.archCell, archStrut: s.archStrut, archCurve: s.archCurve, archGrid: s.archGrid, archShells: s.archShells, archRows: s.archRows === 'posts' ? 'posts' : 'stagger', archCore: s.archCore === 'web' ? 'web' : 'ties', archPlates: s.archPlates === 0 ? 0 : 1,
+    fold: !!s.fold, foldT: s.foldT, foldOpen: s.foldOpen, foldRing: s.foldRing, foldStudH: s.foldStudH, foldBar: s.foldBar, openTop: !!s.openTop, gen: s.gen === 'arch' ? 'arch' : 'cut', archLean: s.archLean, archCell: s.archCell, archStrut: s.archStrut, archCurve: s.archCurve, archGrid: s.archGrid, archShells: s.archShells, archRows: s.archRows === 'posts' ? 'posts' : 'stagger', archCore: s.archCore === 'web' ? 'web' : 'ties', archPlates: s.archPlates === 0 ? 0 : 1,
     type: s.type === 'wedge' ? 'wedge' : 'brick', studs: s.type !== 'flat',
     scale: s.scale, nx: s.nx, ny: s.ny, heightPlates: s.heightPlates, risePlates: s.risePlates, orientation: s.orientation, noSupports: s.noSupports, bridgeMax: s.bridgeMax,
     clearance: s.clearance, studClear: s.studClear, clutch: s.clutch, studD: s.studD, studH: s.studH, studHollow: s.studHollow, studHoleFrac: s.studHoleFrac,
