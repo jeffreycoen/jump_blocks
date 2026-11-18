@@ -1409,7 +1409,7 @@ function createCore(wasm) {
       }
       const all = add.reduce((a, b) => { const n = a.add(b); kill(a, b); return n; });
       const b2 = body.add(all); kill(body, all); body = b2;
-      openTop = { cups: studCentres.length, fins, strips: strips.size, spring: zs, rise: liteRise, finFrom: zFinMin, ring: padH, shell: twS, lean: liteLean };
+      openTop = { cups: studCentres.length, fins, strips: strips.size, spring: zs, rise: liteRise, finFrom: zFinMin, ring: padH, shell: twS, lean: liteLean, fin: tf };
       if (zs < p.studHMM + p.studClear + 0.5) warnings.push('Open top: the stud supports start below the top of the studs of the course underneath. Use a taller block.');
     }
     kill(outer);
@@ -1570,7 +1570,7 @@ function createCore(wasm) {
     const status = placed.status();
     // Hand estimate: the wavy wall as a wide column the full height, pinned at both ends, load spread evenly.
     const E = 1850, A = amp / 2, I = tw * A * A / 2, per = 2 * (W + L), wallN = Math.PI ** 2 * E * I / (H * H) * per;
-    const warnings = [`Hand estimate, not a test: the wavy wall alone holds about ${Math.round(wallN / 9.81)} kg standing (${Math.round(wallN)} N) before it buckles; the tubes and ribs are not counted. Fast block: one wide line in a wave ${amp} mm deep, ${lam} mm long.`, ...r.warnings];
+    const warnings = [`Fast block: the outer wall is one wide line in a wave ${amp} mm deep and ${lam} mm long. The capacity figure rates it as a wavy wall.`, ...r.warnings];
     if (status !== 'NoError') warnings.push('Geometry error: ' + status);
     const stats = { ...r.stats, volume: placed.volume(), surfaceArea: placed.surfaceArea(), numTri: placed.numTri(), status, wall: tw, wave: { amp, lam, wallN } };
     return { manifold: placed, stats, warnings, p };
@@ -2942,6 +2942,15 @@ function createCore(wasm) {
     if (stats.arch) return strengthArch(p, stats, mass);
     const mat = MATERIALS[p.material] || MATERIALS.anycubic_petg_cons;
     const g = p.g, kf = 1 / Math.max(0.1, p.safety);
+    if (stats.pack || stats.fold || stats.ramp) {   // flat-printed and wedge looks: the builder's own hand estimate, load spread evenly
+      const pw = Math.min(p.patchW, stats.W), pl = Math.min(p.patchL, stats.L), pa = pw * pl, R = stats.ramp;
+      const c = stats.pack ? { name: 'Grid posts and hexagon walls', detail: `${stats.pack.nPost} grid posts as pinned columns ${Math.round(stats.pack.gridN)} N; hexagon walls ${Math.round(stats.pack.wallN)} N; even load on the whole plate`, cap: stats.pack.holdN }
+        : stats.fold ? { name: 'Ribs of the inner strips', detail: `${stats.fold.ribs} ribs as pinned columns at ${Math.round(stats.fold.perRib)} N each; even load on the whole plate; walls not counted`, cap: stats.fold.holdN }
+        : R.holdN ? { name: 'Wall buckling', detail: `wavy walls ${Math.round(R.waveN)} N, zigzag ${Math.round(R.zigN)} N, spokes ${Math.round(R.spokeN)} N; even load on the whole wedge`, cap: R.holdN }
+        : { name: 'Grid plate buckling', detail: `${R.perArea.toFixed(2)} N per mm² of surface (plates ${R.wall.toFixed(2)} mm, cells ${R.cell} mm) on a ${Math.min(p.patchW, 39).toFixed(0)} × ${Math.min(p.patchL, 159).toFixed(0)} mm load patch`, cap: R.perArea * Math.min(p.patchW, 39) * Math.min(p.patchL, 159) };
+      const chk = { id: 'hand', ...c, cap: c.cap * kf }; chk.kg = chk.cap / g;
+      return { mat, patchA: pa, patchW: pw, patchL: pl, checks: [chk], governing: chk, capN: chk.cap, capKg: chk.kg, effFrac: 1, A_bear: 0, A_local: 0, latFrac: 0 };
+    }
     const isWedge = p.type === 'wedge';
     const theta = stats.theta * Math.PI / 180;
     const latFrac = isWedge ? Math.sin(theta) : p.mu;              // share of the load pushed sideways into the stud interface
@@ -3018,7 +3027,31 @@ function createCore(wasm) {
       const sigL = 4 * Math.PI ** 2 * E / (12 * (1 - nu ** 2)) * (stats.lattice.t / b) ** 2;
       if (sigL < sigCr) { sigCr = sigL; buckWhat = `${stats.lattice.style} lattice walls ${stats.lattice.t.toFixed(1)} mm thick, ${b.toFixed(0)} mm cell edge`; }
     }
-    const F_buck = Math.min(sigCr, sXY) * A_local;
+    let F_buck = Math.min(sigCr, sXY) * A_local, buckDetail = `${buckWhat}; σcr ${sigCr.toFixed(0)} MPa`;
+    // Open top: the load on top goes through the stud shells and their eight supports before it reaches the walls, tubes and ribs.
+    const extra = [];
+    if (stats.openTop) {
+      const ot = stats.openTop, tfin = ot.fin || 0.84, Rs = stats.studD / 2, D0 = Math.PI ** 2 * E / (12 * (1 - nu ** 2));
+      const nUnder = Math.max(1, Math.min(p.nx * p.ny, patchA / stats.pitch ** 2));
+      // stud shell: crushing, or shell buckling of a short cylinder (0.605·E·t/R with the NASA SP-8007 knock-down)
+      const gam = 1 - 0.901 * (1 - Math.exp(-Math.sqrt(Rs / ot.shell) / 16));
+      const sigSh = Math.min(sXY, gam * 0.605 * E * ot.shell / Rs), aSh = Math.PI * (2 * Rs - ot.shell) * ot.shell;
+      // support: a short deep plate from the shell to a wall, rib or tube; the joint with the shell is its smallest section, in shear
+      const tau = 0.6 * sXY, perFin = tau * tfin * ot.rise;
+      extra.push({ id: 'studShell', name: 'Stud shells', detail: `${nUnder.toFixed(1)} studs under the load; ring ${aSh.toFixed(0)} mm² each at ${sigSh.toFixed(0)} MPa`, cap: nUnder * sigSh * aSh });
+      extra.push({ id: 'studFin', name: 'Stud supports', detail: `${nUnder.toFixed(1)} studs under the load × 8 supports × ${perFin.toFixed(0)} N; each joins its stud shell over ${ot.rise.toFixed(1)} × ${tfin.toFixed(2)} mm; shear ${tau.toFixed(0)} MPa`, cap: nUnder * 8 * perFin });
+      if (!stats.sandwich && !(stats.windows > 0) && !stats.lattice) {
+        // plain thin walls: the outer wall and the inside (tubes and ribs) are rated separately, on the smallest level section of the body
+        const Hf = stats.H, tw = stats.wall, tr = Math.max(p.ribT || 0, 0.84);
+        const sigW = Math.min(sXY, stats.wave ? Math.PI ** 2 * E * (stats.wave.amp / 2) ** 2 / (2 * Hf * Hf) : D0 * (tw / Hf) ** 2);   // a wide strip pinned top and bottom
+        const hL = mass.layerStep || p.layerH, secs = mass.sections || []; let aMin = stats.bearingArea;
+        for (let i = Math.ceil(1 / hL); i <= Math.floor((Hf - 1) / hL) && i < secs.length; i++) aMin = Math.min(aMin, secs[i]);
+        const aWall = Math.min(aMin, 2 * (stats.W + stats.L) * tw), aIn = aMin - aWall;
+        const bR = Math.max(1, stats.pitch - stats.tubeOD / 2), kR = Hf >= bR ? 4 : (bR / Hf + Hf / bR) ** 2, sigR = Math.min(sXY, kR * D0 * (tr / bR) ** 2);   // a rib plate held by the wall and a tube
+        F_buck = (aWall * sigW + aIn * sigR) * share;
+        buckDetail = `under the load: ${stats.wave ? 'wavy ' : ''}outer wall ${(aWall * share).toFixed(0)} mm² at ${sigW.toFixed(1)} MPa (${tw.toFixed(2)} mm thick, ${Hf.toFixed(0)} mm tall, held top and bottom only); tubes and ribs ${(aIn * share).toFixed(0)} mm² at ${sigR.toFixed(1)} MPa (smallest level section; plates ${tr.toFixed(2)} mm thick, ${bR.toFixed(0)} mm wide)`;
+      }
+    }
     // 5) stud roots of the course below under the sideways share (root = layer interface → Z)
     const nStud = p.nx * p.ny;
     const dS = stats.studD, dI = p.studHollow ? dS * p.studHoleFrac : 0;
@@ -3031,7 +3064,8 @@ function createCore(wasm) {
       { id: 'deck', name: 'Deck bending', detail: `clamped panel Ø${stats.deckPanelD.toFixed(1)} mm between supports; deck ${t.toFixed(1)} mm with ${tSolid.toFixed(1)} mm solid skins${openFrac > 0 ? `, ${(openFrac * 100).toFixed(0)}% opened` : ''}; flexural ${sFlex.toFixed(0)} MPa`, cap: F_deck },
       { id: 'shear', name: 'Deck shear at supports', detail: `effective thickness ${tEff.toFixed(2)} mm; 0.6 × Z tensile = ${(0.6 * sZ).toFixed(1)} MPa`, cap: F_shear },
       { id: 'bear', name: 'Walls bearing on the course below', detail: `${A_local.toFixed(0)} mm² of effective footprint under the load (${(effFrac * 100).toFixed(0)}% solid); ${sXY.toFixed(0)} MPa`, cap: F_bear },
-      { id: 'buck', name: 'Buckling', detail: `${buckWhat}; σcr ${sigCr.toFixed(0)} MPa`, cap: F_buck },
+      { id: 'buck', name: 'Buckling', detail: buckDetail, cap: F_buck },
+      ...extra,
       { id: 'stud', name: 'Stud roots (sideways share)', detail: latFrac > 0 ? `${nStud} studs × ${Math.min(Vshear, Vbend).toFixed(0)} N; ${(latFrac * 100).toFixed(0)}% of the load pushes sideways` : 'no sideways load on a flat block', cap: F_stud },
     ].filter(c => !(stats.openTop && (c.id === 'deck' || c.id === 'shear'))).map(c => ({ ...c, kg: c.cap / g }));   // an open top has no deck
     const governing = checks.reduce((m, c) => (c.cap < m.cap ? c : m), checks[0]);
