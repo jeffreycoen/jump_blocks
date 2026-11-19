@@ -1513,16 +1513,16 @@ function createCore(wasm) {
       // sits in a diamond of thin ribs that reach the walls; a short rib backs every grip point. Prints top face down on the bed.
       const W = p.W, hw = W / 2, s = rise / pitch, thr = Math.atan(s), hexTop = params.rampTop === 'hex', tk = params.rampSkin || (hexTop ? 1.4 : 0.84), tv = tk / Math.cos(thr);
       const c2 = params.rampLip || Math.ceil((sH - s * (hw - pitch / 2 - R) + tv + 0.1) * 10) / 10, zt = c2 + s * W, n = Math.round((L + 1) / pitch);
-      const dd = R - cl + t / 2, a = hw - t, hq = dd * a / Math.sqrt(a * a - dd * dd), leg = Math.hypot(a, hq), parts = [];
+      const hr = (pitch - 1) / 2, dd = R - cl + t / 2, a = hr - t, hq = dd * a / Math.sqrt(a * a - dd * dd), leg = Math.hypot(a, hq), parts = [];
       const seg = (x1, y1, x2, y2) => { const dx = x2 - x1, dy = y2 - y1, b = cubeAt(Math.hypot(dx, dy) + t, t, 0, zt), rr = b.rotate([0, 0, Math.atan2(dy, dx) * 180 / Math.PI]); parts.push(rr.translate([(x1 + x2) / 2, (y1 + y2) / 2, 0])); kill(b, rr); };
-      const tx = dd * hq / leg, ty = dd * a / leg, stub = hw - t / 2 - tx - 0.4;
+      const tx = dd * hq / leg, ty = dd * a / leg, stub = hr - t / 2 - tx - 0.4;
       for (const xc of [-pitch / 2, pitch / 2]) {
         for (let i = 0; i < n; i++) { const ys = (i - (n - 1) / 2) * pitch;
-          for (const sx of [-1, 1]) for (const sy of [-1, 1]) { seg(xc + sx * a, ys, xc, ys + sy * hq); seg(xc + sx * (tx + 0.4), ys + sy * ty, xc + sx * (hw - t / 2), ys + sy * ty); }
+          for (const sx of [-1, 1]) for (const sy of [-1, 1]) { seg(xc + sx * a, ys, xc, ys + sy * hq); seg(xc + sx * (tx + 0.4), ys + sy * ty, xc + sx * (hr - t / 2), ys + sy * ty); }
           const y1 = ys + hq, y2 = i < n - 1 ? ys + pitch - hq : L / 2 - t / 2; seg(xc, y1, xc, y2); if (i === 0) seg(xc, -L / 2 + t / 2, xc, ys - hq); }
       }
       parts.push(cubeAt(t, L, 0, zt, hw * 2 - t / 2 - hw, 0), cubeAt(t, L, 0, zt, -hw + t / 2, 0), cubeAt(W, t, 0, zt, 0, L / 2 - t / 2), cubeAt(W, t, 0, zt, 0, -L / 2 + t / 2));
-      parts.push(cubeAt(1.12, L, 0, zt, 0.56, 0), cubeAt(1.0, L, rise, zt, -0.5, 0));
+      parts.push(cubeAt(1.12, L, 0, zt, 0.56, 0), cubeAt(1.2, L, rise, zt, -0.6, 0));
       const ribs = Manifold.union(parts); kill(...parts);
       const box = cubeAt(W, L, 0, zt), cb = cubeAt(6 * pitch, 2 * L, 0, 4 * pitch), cr = cb.rotate([0, th, 0]), ct = cr.translate([hw, 0, c2]), ct2 = ct.translate([0, 0, -tv]);
       const full = box.subtract(ct), inner = box.subtract(ct2); let skin = full.subtract(inner);
